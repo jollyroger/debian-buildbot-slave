@@ -1,0 +1,21 @@
+Description: Comment out example buildslave instance
+Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Last-Update: 2011-03-01
+
+--- a/contrib/init-scripts/buildslave.default
++++ b/contrib/init-scripts/buildslave.default
+@@ -1,8 +1,8 @@
+ SLAVE_RUNNER=/usr/bin/buildslave
+ 
+-SLAVE_ENABLED[1]=0                    # 0-enabled, other-disabled
+-SLAVE_NAME[1]="buildslave #1"         # short name printed on start/stop
+-SLAVE_USER[1]="buildbot"              # user to run slave as
+-SLAVE_BASEDIR[1]=""                   # basedir to slave (absolute path)
+-SLAVE_OPTIONS[1]=""                   # buildbot options  
+-SLAVE_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot
++#SLAVE_ENABLED[1]=0                    # 0-enabled, other-disabled
++#SLAVE_NAME[1]="buildslave #1"         # short name printed on start/stop
++#SLAVE_USER[1]="buildbot"              # user to run slave as
++#SLAVE_BASEDIR[1]=""                   # basedir to slave (absolute path)
++#SLAVE_OPTIONS[1]=""                   # buildbot options  
++#SLAVE_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot

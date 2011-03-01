@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+
+DESTDIR = debian/buildbot-slave
+
+%:
+	dh $@ --with python2
+
+override_dh_auto_clean:
+	rm -fR buildbot_slave.egg-info
+	dh_auto_clean
+
+override_dh_installinit:
+	mkdir -p ${DESTDIR}/etc/init.d ${DESTDIR}/etc/default
+	cp contrib/init-scripts/buildslave.init.sh ${DESTDIR}/etc/init.d/buildslave
+	cp contrib/init-scripts/buildslave.default ${DESTDIR}/etc/default/buildslave
+	dh_installinit --name=buildslave --onlyscripts
