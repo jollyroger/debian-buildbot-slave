@@ -1,6 +1,7 @@
 buildbot-slave (0.8.3-1) unstable; urgency=low
 
   * New upstream version, separate sources for the buildslave.
+  * Break buildbot << 0.8 due to package split.
   * Package using dh_python2 instead of dh_pycentral.
   * Switch to dpkg-source 3.0 (quilt) format.
   * Remove unnecessary Build-Conflicts.
@@ -14,7 +15,7 @@ buildbot-slave (0.8.3-1) unstable; urgency=low
   * fix-init-scripts.patch: comment out example configuration in
     /etc/default/buildslave.
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Tue, 01 Mar 2011 15:43:03 +0200
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Tue, 08 Mar 2011 23:48:50 +0200
 
 buildbot (0.7.12-2) unstable; urgency=low
 

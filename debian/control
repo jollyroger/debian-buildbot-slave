@@ -9,6 +9,7 @@ Standards-Version: 3.9.1
 Package: buildbot-slave
 Architecture: all
 Depends: ${python:Depends}, ${misc:Depends}, python-twisted-core (>= 2.2), python-twisted-words, adduser
+Breaks: buildbot (<< 0.8)
 Suggests: bzr | subversion | cvs | mercurial | darcs | git-core
 XB-Python-Version: ${python:Versions}
 Description: a system to automate the compile/test cycle
