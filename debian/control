@@ -2,16 +2,16 @@ Source: buildbot-slave
 Section: devel
 Priority: optional
 Maintainer: Matthias Klose <doko@debian.org>
-Build-Depends: debhelper (>= 7.0.50~), python (>= 2.6.5-9~), python-twisted (>= 2.2)
-XS-Python-Version: all
+Build-Depends: debhelper (>= 7.0.50~), python-all (>= 2.6.6-3)
+Homepage: http://buildbot.net
 Standards-Version: 3.9.1
+X-Python-Version: >= 2.5
 
 Package: buildbot-slave
 Architecture: all
 Depends: ${python:Depends}, ${misc:Depends}, python-twisted-core (>= 2.2), python-twisted-words, adduser
 Breaks: buildbot (<< 0.8)
 Suggests: bzr | subversion | cvs | mercurial | darcs | git-core
-XB-Python-Version: ${python:Versions}
 Description: a system to automate the compile/test cycle
  The BuildBot is a system to automate the compile/test cycle required
  by most software projects to validate code changes. By automatically

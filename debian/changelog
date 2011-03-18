@@ -14,8 +14,9 @@ buildbot-slave (0.8.3-1) unstable; urgency=low
   * debian/watch: use googlecode for source download.
   * fix-init-scripts.patch: comment out example configuration in
     /etc/default/buildslave.
+  * Make debian/control DEP-5 compliant.
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Tue, 08 Mar 2011 23:48:50 +0200
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 18 Mar 2011 20:14:03 +0200
 
 buildbot (0.7.12-2) unstable; urgency=low
 
