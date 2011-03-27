@@ -11,7 +11,7 @@ Package: buildbot-slave
 Architecture: all
 Depends: ${python:Depends}, ${misc:Depends}, python-twisted-core (>= 2.2), python-twisted-words, adduser
 Breaks: buildbot (<< 0.8)
-Suggests: bzr | subversion | cvs | mercurial | darcs | git-core
+Suggests: buildbot, bzr | subversion | cvs | mercurial | darcs | git-core
 Description: a system to automate the compile/test cycle
  The BuildBot is a system to automate the compile/test cycle required
  by most software projects to validate code changes. By automatically

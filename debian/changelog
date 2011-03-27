@@ -15,8 +15,9 @@ buildbot-slave (0.8.3-1) unstable; urgency=low
   * fix-init-scripts.patch: comment out example configuration in
     /etc/default/buildslave.
   * Make debian/control DEP-5 compliant.
+  * debian/control: add buildbot into suggests list.
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 18 Mar 2011 20:14:03 +0200
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Mon, 28 Mar 2011 02:08:28 +0300
 
 buildbot (0.7.12-2) unstable; urgency=low
 
