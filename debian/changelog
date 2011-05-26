@@ -1,6 +1,6 @@
 buildbot-slave (0.8.3-2) unstable; urgency=low
 
-  * Fix init script: 
+  * Fix init script (Closes: #625555):
     - use string comparison to detect disabled entries
     - skip syntax check on disabled entries
 
