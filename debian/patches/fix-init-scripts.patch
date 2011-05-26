@@ -20,5 +20,23 @@ Last-Update: 2011-03-01
 +#SLAVE_NAME[1]="buildslave #1"         # short name printed on start/stop
 +#SLAVE_USER[1]="buildbot"              # user to run slave as
 +#SLAVE_BASEDIR[1]=""                   # basedir to slave (absolute path)
-+#SLAVE_OPTIONS[1]=""                   # buildbot options  
++#SLAVE_OPTIONS[1]=""                   # buildbot options
 +#SLAVE_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot
+--- a/contrib/init-scripts/buildslave.init.sh
++++ b/contrib/init-scripts/buildslave.init.sh
+@@ -19,15 +19,6 @@
+ 
+ # Source buildslave configuration 
+ [[ -r /etc/default/buildslave ]] && . /etc/default/buildslave
+-#[[ -r /etc/sysconfig/buildslave ]] && . /etc/sysconfig/buildslave
+-
+-# Or define/override the configuration here
+-#SLAVE_ENABLED[1]=0                    # 0-enabled, other-disabled
+-#SLAVE_NAME[1]="buildslave #1"         # short name printed on start/stop
+-#SLAVE_USER[1]="buildbot"              # user to run slave as
+-#SLAVE_BASEDIR[1]=""                   # basedir to slave (absolute path)
+-#SLAVE_OPTIONS[1]=""                   # buildbot options  
+-#SLAVE_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot
+ 
+ if [[ ! -x ${SLAVE_RUNNER} ]]; then
+     log_failure_msg "does not exist or not an executable file: ${SLAVE_RUNNER}"
