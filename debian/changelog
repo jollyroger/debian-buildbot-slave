@@ -1,3 +1,11 @@
+buildbot-slave (0.8.3-2) unstable; urgency=low
+
+  * Fix init script: 
+    - use string comparison to detect disabled entries
+    - skip syntax check on disabled entries
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Thu, 26 May 2011 12:59:20 +0300
+
 buildbot-slave (0.8.3-1) unstable; urgency=low
 
   * New upstream version, separate sources for the buildslave.
