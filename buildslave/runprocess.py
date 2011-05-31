@@ -17,10 +17,12 @@
 Support for running 'shell commands'
 """
 
+import sys
 import os
 import signal
 import types
 import re
+import subprocess
 import traceback
 import stat
 from collections import deque
@@ -30,6 +32,9 @@ from twisted.internet import reactor, defer, protocol, task, error
 
 from buildslave import util
 from buildslave.exceptions import AbandonChain
+
+if runtime.platformType == 'posix':
+    from twisted.internet.process import Process
 
 def shell_quote(cmd_list):
     # attempt to quote cmd_list such that a shell will properly re-interpret
@@ -121,6 +126,20 @@ class LogFileWatcher:
             self.command.addLogfile(self.name, data)
 
 
+if runtime.platformType == 'posix':
+    class ProcGroupProcess(Process):
+        """Sumple subclass of Process to also make the spawned process a process
+        group leader, so we can kill all members of the process group."""
+
+        def _setupChild(self, *args, **kwargs):
+            Process._setupChild(self, *args, **kwargs)
+
+            # this will cause the child to be the leader of its own process group;
+            # it's also spelled setpgrp() on BSD, but this spelling seems to work
+            # everywhere
+            os.setpgid(0, 0)
+
+
 class RunProcessPP(protocol.ProcessProtocol):
     debug = False
 
@@ -130,45 +149,25 @@ class RunProcessPP(protocol.ProcessProtocol):
         self.stdin_finished = False
         self.killed = False
 
-    def writeStdin(self, data):
-        assert not self.stdin_finished
-        if self.connected:
-            self.transport.write(data)
-        else:
-            self.pending_stdin += data
-
-    def closeStdin(self):
-        if self.connected:
-            if self.debug: log.msg(" closing stdin")
-            self.transport.closeStdin()
-        self.stdin_finished = True
+    def setStdin(self, data):
+        assert not self.connected
+        self.pending_stdin = data
 
     def connectionMade(self):
         if self.debug:
             log.msg("RunProcessPP.connectionMade")
-        if not self.command.process:
-            if self.debug:
-                log.msg(" assigning self.command.process: %s" %
-                        (self.transport,))
-            self.command.process = self.transport
 
-        # TODO: maybe we shouldn't close stdin when using a PTY. I can't test
-        # this yet, recent debian glibc has a bug which causes thread-using
-        # test cases to SIGHUP trial, and the workaround is to either run
-        # the whole test with /bin/sh -c " ".join(argv)  (way gross) or to
-        # not use a PTY. Once the bug is fixed, I'll be able to test what
-        # happens when you close stdin on a pty. My concern is that it will
-        # SIGHUP the child (since we are, in a sense, hanging up on them).
-        # But it may well be that keeping stdout open prevents the SIGHUP
-        # from being sent.
-        #if not self.command.usePTY:
+        if self.command.useProcGroup:
+            if self.debug:
+                log.msg(" recording pid %d as subprocess pgid"
+                        % (self.transport.pid,))
+            self.transport.pgid = self.transport.pid
 
         if self.pending_stdin:
             if self.debug: log.msg(" writing to stdin")
             self.transport.write(self.pending_stdin)
-        if self.stdin_finished:
-            if self.debug: log.msg(" closing stdin")
-            self.transport.closeStdin()
+        if self.debug: log.msg(" closing stdin")
+        self.transport.closeStdin()
 
     def outReceived(self, data):
         if self.debug:
@@ -194,12 +193,13 @@ class RunProcessPP(protocol.ProcessProtocol):
         # http://stackoverflow.com/questions/2061735/42-passed-to-terminateprocess-sometimes-getexitcodeprocess-returns-0
         if self.killed and rc == 0:
             log.msg("process was killed, but exited with status 0; faking a failure")
-            # windows returns '1' even for signalled failsres, while POSIX returns -1
+            # windows returns '1' even for signalled failures, while POSIX returns -1
             if runtime.platformType == 'win32':
                 rc = 1
             else:
                 rc = -1
         self.command.finished(sig, rc)
+
 
 class RunProcess:
     """
@@ -233,8 +233,9 @@ class RunProcess:
                  workdir, environ=None,
                  sendStdout=True, sendStderr=True, sendRC=True,
                  timeout=None, maxTime=None, initialStdin=None,
-                 keepStdinOpen=False, keepStdout=False, keepStderr=False,
-                 logEnviron=True, logfiles={}, usePTY="slave-config"):
+                 keepStdout=False, keepStderr=False,
+                 logEnviron=True, logfiles={}, usePTY="slave-config",
+                 useProcGroup=True):
         """
 
         @param keepStdout: if True, we keep a copy of all the stdout text
@@ -245,6 +246,9 @@ class RunProcess:
 
         @param usePTY: "slave-config" -> use the SlaveBuilder's usePTY;
             otherwise, true to use a PTY, false to not use a PTY.
+
+        @param useProcGroup: (default True) use a process group for non-PTY
+            process invocations
         """
 
         self.builder = builder
@@ -273,6 +277,7 @@ class RunProcess:
         self.sendRC = sendRC
         self.logfiles = logfiles
         self.workdir = workdir
+        self.process = None
         if not os.path.exists(workdir):
             os.makedirs(workdir)
         if environ:
@@ -305,7 +310,6 @@ class RunProcess:
         else: # not environ
             self.environ = os.environ.copy()
         self.initialStdin = initialStdin
-        self.keepStdinOpen = keepStdinOpen
         self.logEnviron = logEnviron
         self.timeout = timeout
         self.timer = None
@@ -331,6 +335,14 @@ class RunProcess:
             if self.usePTY and usePTY != "slave-config":
                 self.sendStatus({'header': "WARNING: disabling usePTY for this command"})
             self.usePTY = False
+
+        # use an explicit process group on POSIX, noting that usePTY always implies
+        # a process group.
+        if runtime.platformType != 'posix':
+            useProcGroup = False
+        elif self.usePTY:
+            useProcGroup = True
+        self.useProcGroup = useProcGroup
 
         self.logFileWatchers = []
         for name,filevalue in self.logfiles.items():
@@ -428,7 +440,17 @@ class RunProcess:
         # then comes the secondary information
         msg = " in dir %s" % (self.workdir,)
         if self.timeout:
-            msg += " (timeout %d secs)" % (self.timeout,)
+            if self.timeout == 1:
+                unit = "sec"
+            else:
+                unit = "secs"
+            msg += " (timeout %d %s)" % (self.timeout, unit)
+        if self.maxTime:
+            if self.maxTime == 1:
+                unit = "sec"
+            else:
+                unit = "secs"
+            msg += " (maxTime %d %s)" % (self.maxTime, unit)
         log.msg(" " + msg)
         self._addToBuffers('header', msg+"\n")
 
@@ -456,48 +478,26 @@ class RunProcess:
             log.msg(" " + msg)
             self._addToBuffers('header', msg+"\n")
 
-        if self.keepStdinOpen:
-            msg = " leaving stdin open"
-        else:
-            msg = " closing stdin"
-        log.msg(" " + msg)
-        self._addToBuffers('header', msg+"\n")
-
         msg = " using PTY: %s" % bool(self.usePTY)
         log.msg(" " + msg)
         self._addToBuffers('header', msg+"\n")
 
-        # this will be buffered until connectionMade is called
+        # put data into stdin and close it, if necessary.  This will be
+        # buffered until connectionMade is called
         if self.initialStdin:
-            self.pp.writeStdin(self.initialStdin)
-        if not self.keepStdinOpen:
-            self.pp.closeStdin()
+            self.pp.setStdin(self.initialStdin)
 
-        # win32eventreactor's spawnProcess (under twisted <= 2.0.1) returns
-        # None, as opposed to all the posixbase-derived reactors (which
-        # return the new Process object). This is a nuisance. We can make up
-        # for it by having the ProcessProtocol give us their .transport
-        # attribute after they get one. I'd prefer to get it from
-        # spawnProcess because I'm concerned about returning from this method
-        # without having a valid self.process to work with. (if kill() were
-        # called right after we return, but somehow before connectionMade
-        # were called, then kill() would blow up).
-        self.process = None
         self.startTime = util.now(self._reactor)
 
-        p = reactor.spawnProcess(self.pp, argv[0], argv,
+        # start the process
+
+        self.process = self._spawnProcess(
+                                 self.pp, argv[0], argv,
                                  self.environ,
                                  self.workdir,
                                  usePTY=self.usePTY)
-        # connectionMade might have been called during spawnProcess
-        if not self.process:
-            self.process = p
 
-        # connectionMade also closes stdin as long as we're not using a PTY.
-        # This is intended to kill off inappropriately interactive commands
-        # better than the (long) hung-command timeout. ProcessPTY should be
-        # enhanced to allow the same childFDs argument that Process takes,
-        # which would let us connect stdin to /dev/null .
+        # set up timeouts
 
         if self.timeout:
             self.timer = self._reactor.callLater(self.timeout, self.doTimeout)
@@ -508,6 +508,20 @@ class RunProcess:
         for w in self.logFileWatchers:
             w.start()
 
+    def _spawnProcess(self, processProtocol, executable, args=(), env={},
+            path=None, uid=None, gid=None, usePTY=False, childFDs=None):
+        """private implementation of reactor.spawnProcess, to allow use of
+        L{ProcGroupProcess}"""
+
+        # use the ProcGroupProcess class, if available
+        if runtime.platformType == 'posix':
+            if self.useProcGroup and not usePTY:
+                return ProcGroupProcess(reactor, executable, args, env, path,
+                                    processProtocol, uid, gid, childFDs)
+
+        # fall back
+        return reactor.spawnProcess(processProtocol, executable, args, env,
+                                        path, usePTY=usePTY)
 
     def _chunkForSend(self, data):
         """
@@ -710,8 +724,7 @@ class RunProcess:
         if self.buftimer:
             self.buftimer.cancel()
             self.buftimer = None
-        if hasattr(self.process, "pid") and self.process.pid is not None:
-            msg += ", killing pid %s" % self.process.pid
+        msg += ", attempting to kill"
         log.msg(msg)
         self.sendStatus({'header': "\n" + msg + "\n"})
 
@@ -719,55 +732,60 @@ class RunProcess:
         # the exit status comes out right
         self.pp.killed = True
 
+        # keep track of whether we believe we've successfully killed something
         hit = 0
-        if runtime.platformType == "posix":
-            try:
-                # really want to kill off all child processes too. Process
-                # Groups are ideal for this, but that requires
-                # spawnProcess(usePTY=1). Try both ways in case process was
-                # not started that way.
 
-                # the test suite sets self.KILL=None to tell us we should
-                # only pretend to kill the child. This lets us test the
-                # backup timer.
+        # try signalling the process group
+        if not hit and self.useProcGroup and runtime.platformType == "posix":
+            sig = getattr(signal, "SIG"+ self.KILL, None)
 
-                sig = None
-                if self.KILL is not None:
-                    sig = getattr(signal, "SIG"+ self.KILL, None)
-
-                if self.KILL == None:
-                    log.msg("self.KILL==None, only pretending to kill child")
-                elif sig is None:
-                    log.msg("signal module is missing SIG%s" % self.KILL)
-                elif not hasattr(os, "kill"):
-                    log.msg("os module is missing the 'kill' function")
-                elif not hasattr(self.process, "pid") or self.process.pid is None:
-                    log.msg("self.process has no pid")
-                else:
-                    log.msg("trying os.kill(-pid, %d)" % (sig,))
-                    # TODO: maybe use os.killpg instead of a negative pid?
-                    os.kill(-self.process.pid, sig)
+            if sig is None:
+                log.msg("signal module is missing SIG%s" % self.KILL)
+            elif not hasattr(os, "kill"):
+                log.msg("os module is missing the 'kill' function")
+            elif self.process.pgid is None:
+                log.msg("self.process has no pgid")
+            else:
+                log.msg("trying to kill process group %d" %
+                                                (self.process.pgid,))
+                try:
+                    os.kill(-self.process.pgid, sig)
                     log.msg(" signal %s sent successfully" % sig)
+                    self.process.pgid = None
                     hit = 1
-            except OSError:
-                # probably no-such-process, maybe because there is no process
-                # group
-                pass
+                except OSError:
+                    log.msg('failed to kill process group (ignored): %s' %
+                            (sys.exc_info()[1],))
+                    # probably no-such-process, maybe because there is no process
+                    # group
+                    pass
+
+        elif runtime.platformType == "win32":
+            if self.KILL == None:
+                log.msg("self.KILL==None, only pretending to kill child")
+            else:
+                log.msg("using TASKKILL /F PID /T to kill pid %s" % self.process.pid)
+                subprocess.check_call("TASKKILL /F /PID %s /T" % self.process.pid)
+                log.msg("taskkill'd pid %s" % self.process.pid)
+                hit = 1
+
+        # try signalling the process itself (works on Windows too, sorta)
         if not hit:
             try:
-                if self.KILL is None:
-                    log.msg("self.KILL==None, only pretending to kill child")
-                else:
-                    log.msg("trying process.signalProcess('KILL')")
-                    self.process.signalProcess(self.KILL)
-                    log.msg(" signal %s sent successfully" % (self.KILL,))
-                    hit = 1
+                log.msg("trying process.signalProcess('%s')" % (self.KILL,))
+                self.process.signalProcess(self.KILL)
+                log.msg(" signal %s sent successfully" % (self.KILL,))
+                hit = 1
             except OSError:
+                log.err("from process.signalProcess:")
                 # could be no-such-process, because they finished very recently
                 pass
             except error.ProcessExitedAlready:
-                # Twisted thinks the process has already exited
+                log.msg("Process exited already - can't kill")
+                # the process has already exited, and likely finished() has
+                # been called already or will be called shortly
                 pass
+
         if not hit:
             log.msg("signalProcess/os.kill failed both times")
 
@@ -777,9 +795,10 @@ class RunProcess:
             # stderr. This is weird.
             self.pp.transport.loseConnection()
 
-        # finished ought to be called momentarily. Just in case it doesn't,
-        # set a timer which will abandon the command.
-        self.timer = self._reactor.callLater(self.BACKUP_TIMEOUT,
+        if self.deferred:
+            # finished ought to be called momentarily. Just in case it doesn't,
+            # set a timer which will abandon the command.
+            self.timer = self._reactor.callLater(self.BACKUP_TIMEOUT,
                                        self.doBackupTimeout)
 
     def doBackupTimeout(self):
@@ -791,12 +810,3 @@ class RunProcess:
             self.sendStatus({'header': "using fake rc=-1\n"})
             self.sendStatus({'rc': -1})
         self.failed(RuntimeError("SIGKILL failed to kill process"))
-
-
-    def writeStdin(self, data):
-        self.pp.writeStdin(data)
-
-    def closeStdin(self):
-        self.pp.closeStdin()
-
-
