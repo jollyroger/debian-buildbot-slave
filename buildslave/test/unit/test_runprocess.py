@@ -16,13 +16,15 @@
 import sys
 import re
 import os
+import time
+import signal
 
-import twisted
 from twisted.trial import unittest
-from twisted.internet import task
-from twisted.python import runtime
+from twisted.internet import task, defer, reactor
+from twisted.python import runtime, util, log
 
 from buildslave.test.util.misc import nl, BasedirMixin
+from buildslave.test.util import compat
 from buildslave.test.fake.slavebuilder import FakeSlaveBuilder
 from buildslave.exceptions import AbandonChain
 from buildslave import runprocess
@@ -35,6 +37,10 @@ def stderrCommand(output):
 
 def sleepCommand(dur):
     return [sys.executable, '-c', 'import time; time.sleep(%d)' % dur]
+
+def scriptCommand(function, *args):
+    runprocess_scripts = util.sibpath(__file__, 'runprocess-scripts.py')
+    return [sys.executable, runprocess_scripts, function] + list(args)
 
 # windows returns rc 1, because exit status cannot indicate "signalled";
 # posix returns rc -1 for "signalled"
@@ -158,6 +164,22 @@ class TestRunProcess(BasedirMixin, unittest.TestCase):
         clock.advance(6) # should knock out maxTime
         return d
 
+    def test_stdin_closed(self):
+        b = FakeSlaveBuilder(False, self.basedir)
+        s = runprocess.RunProcess(b,
+                scriptCommand('assert_stdin_closed'),
+                self.basedir,
+                usePTY=False, # if usePTY=True, stdin is never closed
+                logEnviron=False)
+        d = s.start()
+        def check(ign):
+            self.failUnless({'rc': 0} in b.updates, b.show())
+        d.addCallback(check)
+        return d
+    if runtime.platformType != "posix":
+        test_stdin_closed.skip = "not a POSIX platform"
+
+    @compat.usesFlushLoggedErrors
     def testBadCommand(self):
         b = FakeSlaveBuilder(False, self.basedir)
         s = runprocess.RunProcess(b, ['command_that_doesnt_exist.exe'], self.basedir)
@@ -176,8 +198,6 @@ class TestRunProcess(BasedirMixin, unittest.TestCase):
         d.addBoth(check)
         d.addBoth(lambda _ : self.flushLoggedErrors())
         return d
-    if twisted.version.major <= 9 and sys.version_info[:2] >= (2,7):
-        testBadCommand.skip = "flushLoggedErrors does not work correctly on 9.0.0 and earlier with Python-2.7"
 
     def testLogEnviron(self):
         b = FakeSlaveBuilder(False, self.basedir)
@@ -229,6 +249,218 @@ class TestRunProcess(BasedirMixin, unittest.TestCase):
             headers = "".join([update.values()[0] for update in b.updates if update.keys() == ["header"] ])
             self.failUnless(not re.match('\bPATH=',headers), "got:\n" + headers)
         d.addCallback(check)
+        return d
+
+class TestPOSIXKilling(BasedirMixin, unittest.TestCase):
+
+    if runtime.platformType != "posix":
+        skip = "not a POSIX platform"
+
+    def setUp(self):
+        self.pidfiles = []
+        self.setUpBasedir()
+
+    def tearDown(self):
+        # make sure all of the subprocesses are dead
+        for pidfile in self.pidfiles:
+            if not os.path.exists(pidfile): continue
+            pid = open(pidfile).read()
+            if not pid: return
+            pid = int(pid)
+            try: os.kill(pid, signal.SIGKILL)
+            except OSError: pass
+
+        # and clean up leftover pidfiles
+        for pidfile in self.pidfiles:
+            if os.path.exists(pidfile):
+                os.unlink(pidfile)
+
+        self.tearDownBasedir()
+
+    def newPidfile(self):
+        pidfile = os.path.abspath("test-%d.pid" % len(self.pidfiles))
+        if os.path.exists(pidfile):
+            os.unlink(pidfile)
+        self.pidfiles.append(pidfile)
+        return pidfile
+
+    def waitForPidfile(self, pidfile):
+        # wait for a pidfile, and return the pid via a Deferred
+        until = time.time() + 10
+        d = defer.Deferred()
+        def poll():
+            if reactor.seconds() > until:
+                d.errback(RuntimeError("pidfile %s never appeared" % pidfile))
+                return
+            if os.path.exists(pidfile):
+                try:
+                    pid = int(open(pidfile).read())
+                except:
+                    pid = None
+
+                if pid is not None:
+                    d.callback(pid)
+                    return
+            reactor.callLater(0.01, poll)
+        poll() # poll right away
+        return d
+
+    def assertAlive(self, pid):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            self.fail("pid %d still alive" % (pid,))
+
+    def assertDead(self, pid, timeout=5):
+        log.msg("checking pid %r" % (pid,))
+        def check():
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True # dead
+            return False # alive
+
+        # check immediately
+        if check(): return
+
+        # poll every 100'th of a second; this allows us to test for
+        # processes that have been killed, but where the signal hasn't
+        # been delivered yet
+        until = time.time() + timeout
+        while time.time() < until:
+            time.sleep(0.01)
+            if check():
+                return
+        self.fail("pid %d still alive after %ds" % (pid, timeout))
+
+    # tests
+
+    def test_simple(self):
+        # test a simple process that just sleeps waiting to die
+        pidfile = self.newPidfile()
+        self.pid = None
+
+        b = FakeSlaveBuilder(False, self.basedir)
+        s = runprocess.RunProcess(b,
+                scriptCommand('write_pidfile_and_sleep', pidfile),
+                self.basedir)
+        runproc_d = s.start()
+
+        pidfile_d = self.waitForPidfile(pidfile)
+
+        def check_alive(pid):
+            self.pid = pid # for use in check_dead
+            # test that the process is still alive
+            self.assertAlive(pid)
+            # and tell the RunProcess object to kill it
+            s.kill("diaf")
+        pidfile_d.addCallback(check_alive)
+
+        def check_dead(_):
+            self.assertDead(self.pid)
+        runproc_d.addCallback(check_dead)
+        return defer.gatherResults([pidfile_d, runproc_d])
+
+    def test_pgroup_usePTY(self):
+        return self.do_test_pgroup(usePTY=True)
+
+    def test_pgroup_no_usePTY(self):
+        return self.do_test_pgroup(usePTY=False)
+
+    def test_pgroup_no_usePTY_no_pgroup(self):
+        # note that this configuration is not *used*, but that it is
+        # still supported, and correctly fails to kill the child process
+        return self.do_test_pgroup(usePTY=False, useProcGroup=False,
+                expectChildSurvival=True)
+
+    def do_test_pgroup(self, usePTY, useProcGroup=True,
+                expectChildSurvival=False):
+        # test that a process group gets killed
+        parent_pidfile = self.newPidfile()
+        self.parent_pid = None
+        child_pidfile = self.newPidfile()
+        self.child_pid = None
+
+        b = FakeSlaveBuilder(False, self.basedir)
+        s = runprocess.RunProcess(b,
+                scriptCommand('spawn_child', parent_pidfile, child_pidfile),
+                self.basedir,
+                usePTY=usePTY,
+                useProcGroup=useProcGroup)
+        runproc_d = s.start()
+
+        # wait for both processes to start up, then call s.kill
+        parent_pidfile_d = self.waitForPidfile(parent_pidfile)
+        child_pidfile_d = self.waitForPidfile(child_pidfile)
+        pidfiles_d = defer.gatherResults([parent_pidfile_d, child_pidfile_d])
+        def got_pids(pids):
+            self.parent_pid, self.child_pid = pids
+        pidfiles_d.addCallback(got_pids)
+        def kill(_):
+            s.kill("diaf")
+        pidfiles_d.addCallback(kill)
+
+        # check that both processes are dead after RunProcess is done
+        d = defer.gatherResults([pidfiles_d, runproc_d])
+        def check_dead(_):
+            self.assertDead(self.parent_pid)
+            if expectChildSurvival:
+                self.assertAlive(self.child_pid)
+            else:
+                self.assertDead(self.child_pid)
+        d.addCallback(check_dead)
+        return d
+
+    def test_double_fork_usePTY(self):
+        return self.do_test_double_fork(usePTY=True)
+
+    def test_double_fork_no_usePTY(self):
+        return self.do_test_double_fork(usePTY=False)
+
+    def test_double_fork_no_usePTY_no_pgroup(self):
+        # note that this configuration is not *used*, but that it is
+        # still supported, and correctly fails to kill the child process
+        return self.do_test_double_fork(usePTY=False, useProcGroup=False,
+                expectChildSurvival=True)
+
+    def do_test_double_fork(self, usePTY, useProcGroup=True,
+                            expectChildSurvival=False):
+        # when a spawned process spawns another process, and then dies itself
+        # (either intentionally or accidentally), we should be able to clean up
+        # the child.
+        parent_pidfile = self.newPidfile()
+        self.parent_pid = None
+        child_pidfile = self.newPidfile()
+        self.child_pid = None
+
+        b = FakeSlaveBuilder(False, self.basedir)
+        s = runprocess.RunProcess(b,
+                scriptCommand('double_fork', parent_pidfile, child_pidfile),
+                self.basedir,
+                usePTY=usePTY,
+                useProcGroup=useProcGroup)
+        runproc_d = s.start()
+
+        # wait for both processes to start up, then call s.kill
+        parent_pidfile_d = self.waitForPidfile(parent_pidfile)
+        child_pidfile_d = self.waitForPidfile(child_pidfile)
+        pidfiles_d = defer.gatherResults([parent_pidfile_d, child_pidfile_d])
+        def got_pids(pids):
+            self.parent_pid, self.child_pid = pids
+        pidfiles_d.addCallback(got_pids)
+        def kill(_):
+            s.kill("diaf")
+        pidfiles_d.addCallback(kill)
+
+        # check that both processes are dead after RunProcess is done
+        d = defer.gatherResults([pidfiles_d, runproc_d])
+        def check_dead(_):
+            self.assertDead(self.parent_pid)
+            if expectChildSurvival:
+                self.assertAlive(self.child_pid)
+            else:
+                self.assertDead(self.child_pid)
+        d.addCallback(check_dead)
         return d
 
 class TestLogging(BasedirMixin, unittest.TestCase):

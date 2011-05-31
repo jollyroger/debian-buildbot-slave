@@ -20,7 +20,32 @@ from twisted.internet import defer
 
 from buildslave.commands.base import Command
 
-class SlaveFileUploadCommand(Command):
+class TransferCommand(Command):
+
+    def finished(self, res):
+        if self.debug:
+            log.msg('finished: stderr=%r, rc=%r' % (self.stderr, self.rc))
+
+        # don't use self.sendStatus here, since we may no longer be running
+        # if we have been interrupted
+        upd = {'rc': self.rc}
+        if self.stderr:
+            upd['stderr'] = self.stderr
+        self.builder.sendUpdate(upd)
+        return res
+
+    def interrupt(self):
+        if self.debug:
+            log.msg('interrupted')
+        if self.interrupted:
+            return
+        self.rc = 1
+        self.interrupted = True
+        # now we wait for the next trip around the loop.  It abandon the file
+        # when it sees self.interrupted set.
+
+
+class SlaveFileUploadCommand(TransferCommand):
     """
     Upload a file from slave to build master
     Arguments:
@@ -30,6 +55,7 @@ class SlaveFileUploadCommand(Command):
         - ['writer']:    RemoteReference to a transfer._FileWriter object
         - ['maxsize']:   max size (in bytes) of file to write
         - ['blocksize']: max size for each data block
+        - ['keepstamp']: whether to preserve file modified and accessed times
     """
     debug = False
 
@@ -39,6 +65,7 @@ class SlaveFileUploadCommand(Command):
         self.writer = args['writer']
         self.remaining = args['maxsize']
         self.blocksize = args['blocksize']
+        self.keepstamp = args['keepstamp']
         self.stderr = None
         self.rc = 0
 
@@ -50,7 +77,12 @@ class SlaveFileUploadCommand(Command):
         self.path = os.path.join(self.builder.basedir,
                                  self.workdir,
                                  os.path.expanduser(self.filename))
+        accessed_modified = None
         try:
+            if self.keepstamp:
+                accessed_modified = (os.path.getatime(self.path),
+                                     os.path.getmtime(self.path))
+
             self.fp = open(self.path, 'rb')
             if self.debug:
                 log.msg("Opened '%s' for upload" % self.path)
@@ -67,7 +99,12 @@ class SlaveFileUploadCommand(Command):
         self._reactor.callLater(0, self._loop, d)
         def _close_ok(res):
             self.fp = None
-            return self.writer.callRemote("close")
+            d1 = self.writer.callRemote("close")
+            def _utime_ok(res):
+                return self.writer.callRemote("utime", accessed_modified)
+            if self.keepstamp:
+                d1.addCallback(_utime_ok)
+            return d1
         def _close_err(f):
             self.fp = None
             # call remote's close(), but keep the existing failure
@@ -78,6 +115,7 @@ class SlaveFileUploadCommand(Command):
             d1.addErrback(eb)
             d1.addBoth(lambda _ : f) # always return _loop failure
             return d1
+
         d.addCallbacks(_close_ok, _close_err)
         d.addBoth(self.finished)
         return d
@@ -128,26 +166,6 @@ class SlaveFileUploadCommand(Command):
         d = self.writer.callRemote('write', data)
         d.addCallback(lambda res: False)
         return d
-
-    def interrupt(self):
-        if self.debug:
-            log.msg('interrupted')
-        if self.interrupted:
-            return
-        if self.stderr is None:
-            self.stderr = 'Upload of \'%s\' interrupted' % self.path
-            self.rc = 1
-        self.interrupted = True
-        # the next _writeBlock call will notice the .interrupted flag
-
-    def finished(self, res):
-        if self.debug:
-            log.msg('finished: stderr=%r, rc=%r' % (self.stderr, self.rc))
-        if self.stderr is None:
-            self.sendStatus({'rc': self.rc})
-        else:
-            self.sendStatus({'stderr': self.stderr, 'rc': self.rc})
-        return res
 
 
 class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
@@ -218,16 +236,10 @@ class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
     def finished(self, res):
         self.fp.close()
         os.remove(self.tarname)
-        if self.debug:
-            log.msg('finished: stderr=%r, rc=%r' % (self.stderr, self.rc))
-        if self.stderr is None:
-            self.sendStatus({'rc': self.rc})
-        else:
-            self.sendStatus({'stderr': self.stderr, 'rc': self.rc})
-        return res
+        return TransferCommand.finished(self, res)
 
 
-class SlaveFileDownloadCommand(Command):
+class SlaveFileDownloadCommand(TransferCommand):
     """
     Download a file from master to slave
     Arguments:
@@ -290,7 +302,7 @@ class SlaveFileDownloadCommand(Command):
         def _close(res):
             # close the file, but pass through any errors from _loop
             d1 = self.reader.callRemote('close')
-            d1.addErrback(log.err) # ignore errors closing a reader file
+            d1.addErrback(log.err, 'while trying to close reader')
             d1.addCallback(lambda ignored: res)
             return d1
         d.addBoth(_close)
@@ -345,26 +357,8 @@ class SlaveFileDownloadCommand(Command):
         self.fp.write(data)
         return False
 
-    def interrupt(self):
-        if self.debug:
-            log.msg('interrupted')
-        if self.interrupted:
-            return
-        if self.stderr is None:
-            self.stderr = "Download of '%s' interrupted" % self.path
-            self.rc = 1
-        self.interrupted = True
-        # now we wait for the next read request to return. _readBlock will
-        # abandon the file when it sees self.interrupted set.
-
     def finished(self, res):
         if self.fp is not None:
             self.fp.close()
 
-        if self.debug:
-            log.msg('finished: stderr=%r, rc=%r' % (self.stderr, self.rc))
-        if self.stderr is None:
-            self.sendStatus({'rc': self.rc})
-        else:
-            self.sendStatus({'stderr': self.stderr, 'rc': self.rc})
-        return res
+        return TransferCommand.finished(self, res)
