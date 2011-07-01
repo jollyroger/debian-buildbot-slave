@@ -2,8 +2,9 @@ buildbot-slave (0.8.4-1) unstable; urgency=low
 
   * New upstream version(Closes: #625555)
   * Bump Standards-Version to 3.9.2.
+  * Apply patch from Andreas Beckmann (Closes: #627918)
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 01 Jul 2011 13:36:41 +0300
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 01 Jul 2011 13:45:56 +0300
 
 buildbot-slave (0.8.3-1) unstable; urgency=low
 

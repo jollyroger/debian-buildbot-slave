@@ -1,0 +1,18 @@
+Description: Fix *_PREFIXCMD usage in init script
+ This patch fixes Debian bug #627918.
+Author: Andreas Beckmann <debian@abeckmann.de>
+Forwarded: https://github.com/buildbot/buildbot/pull/172
+Applied-Upstream: https://github.com/buildbot/buildbot/commit/58c4d57584
+Last-Update: 2011-06-29
+
+--- a/contrib/init-scripts/buildslave.init.sh
++++ b/contrib/init-scripts/buildslave.init.sh
+@@ -103,7 +103,7 @@
+ function slave_op () {
+     op=$1 ; mi=$2
+ 
+-    ${SLAVE_PREFIXCMD[$1]} \
++    ${SLAVE_PREFIXCMD[$mi]} \
+     su -s /bin/sh \
+     -c "$SLAVE_RUNNER $op --quiet ${SLAVE_OPTIONS[$mi]} ${SLAVE_BASEDIR[$mi]}" \
+     - ${SLAVE_USER[$mi]}
