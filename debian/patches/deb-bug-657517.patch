@@ -1,0 +1,54 @@
+From 38525c1a412e7e3c6ce1932d250e682bc56cdcf4 Mon Sep 17 00:00:00 2001
+From: Charles Davis <cdavis@mymail.mines.edu>
+Date: Sat, 8 Oct 2011 20:45:20 -0600
+Subject: [PATCH] buildslave/git: Don't fail the whole build if git branch -M
+ can't rename master.
+
+Previous versions of Git allowed the current branch to be renamed. For
+some reason, Git 1.7.7 does not allow this. All attempts to rename the
+current branch fail with "Cannot force update the current branch." So,
+if the rename fails, don't abort.
+
+As part of this, add support for commands that can fail.
+
+ buildslave/commands/git.py |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+Origin: upstream, https://github.com/buildbot/buildbot/commit/38525c1a
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=657517
+
+diff --git a/buildslave/commands/git.py b/buildslave/commands/git.py
+index b6c80e3..abef42b 100644
+--- a/buildslave/commands/git.py
++++ b/buildslave/commands/git.py
+@@ -63,7 +63,7 @@ class Git(SourceBaseCommand):
+     def sourcedirIsUpdateable(self):
+         return os.path.isdir(os.path.join(self._fullSrcdir(), ".git"))
+ 
+-    def _dovccmd(self, command, cb=None, **kwargs):
++    def _dovccmd(self, command, cb=None, stopOnFail=True, **kwargs):
+         git = self.getCommand("git")
+         c = runprocess.RunProcess(self.builder, [git] + command, self._fullSrcdir(),
+                          sendRC=False, timeout=self.timeout,
+@@ -72,7 +72,8 @@ class Git(SourceBaseCommand):
+         self.command = c
+         d = c.start()
+         if cb:
+-            d.addCallback(self._abandonOnFailure)
++            if stopOnFail:
++                d.addCallback(self._abandonOnFailure)
+             d.addCallback(cb)
+         return d
+ 
+@@ -107,7 +108,7 @@ class Git(SourceBaseCommand):
+         # Rename branch, so that the repo will have the expected branch name
+         # For further information about this, see the commit message
+         command = ['branch', '-M', self.branch]
+-        return self._dovccmd(command, self._initSubmodules)
++        return self._dovccmd(command, self._initSubmodules, False)
+         
+     def _didFetch(self, res):
+         if self.revision:
+-- 
+1.7.9.1
+

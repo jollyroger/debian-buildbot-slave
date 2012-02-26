@@ -65,7 +65,7 @@ class SlaveFileUploadCommand(TransferCommand):
         self.writer = args['writer']
         self.remaining = args['maxsize']
         self.blocksize = args['blocksize']
-        self.keepstamp = args['keepstamp']
+        self.keepstamp = args.get('keepstamp', False)
         self.stderr = None
         self.rc = 0
 
@@ -106,6 +106,7 @@ class SlaveFileUploadCommand(TransferCommand):
                 d1.addCallback(_utime_ok)
             return d1
         def _close_err(f):
+            self.rc = 1
             self.fp = None
             # call remote's close(), but keep the existing failure
             d1 = self.writer.callRemote("close")
@@ -169,17 +170,6 @@ class SlaveFileUploadCommand(TransferCommand):
 
 
 class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
-    """
-    Upload a directory from slave to build master
-    Arguments:
-
-        - ['workdir']:   base directory to use
-        - ['slavesrc']:  name of the slave-side directory to read from
-        - ['writer']:    RemoteReference to a transfer._DirectoryWriter object
-        - ['maxsize']:   max size (in bytes) of file to write
-        - ['blocksize']: max size for each data block
-        - ['compress']:  one of [None, 'bz2', 'gz']
-    """
     debug = False
 
     def setup(self, args):
@@ -224,9 +214,11 @@ class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
         d = defer.Deferred()
         self._reactor.callLater(0, self._loop, d)
         def unpack(res):
-            # unpack the archive, but pass through any errors from _loop
             d1 = self.writer.callRemote("unpack")
-            d1.addErrback(log.err)
+            def unpack_err(f):
+                self.rc = 1
+                return f
+            d1.addErrback(unpack_err)
             d1.addCallback(lambda ignored: res)
             return d1
         d.addCallback(unpack)

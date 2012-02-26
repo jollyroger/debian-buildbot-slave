@@ -1,9 +1,29 @@
+buildbot-slave (0.8.5-2) unstable; urgency=low
+
+  * deb-bug-657517.patch: cherry-pick from upstream(Closes: #657517)
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Sun, 26 Feb 2012 02:29:06 +0200
+
+buildbot-slave (0.8.5-1.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Don't remove the buildbot user in postrm purge (closes: #640603).
+
+ -- Julien Cristau <jcristau@debian.org>  Sun, 01 Jan 2012 14:48:51 +0100
+
+buildbot-slave (0.8.5-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Matthias Klose <doko@debian.org>  Sat, 22 Oct 2011 23:56:07 +0200
+
 buildbot-slave (0.8.4-1) unstable; urgency=low
 
-  * New upstream version(Closes: #625555)
+  * New upstream version (Closes: #625555)
   * Bump Standards-Version to 3.9.2.
+  * Apply patch from Andreas Beckmann (Closes: #627918)
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 01 Jul 2011 13:36:41 +0300
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 01 Jul 2011 13:45:56 +0300
 
 buildbot-slave (0.8.3-1) unstable; urgency=low
 

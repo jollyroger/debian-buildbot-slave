@@ -1,6 +1,0 @@
-.pc
-*.rej
-*.orig
-*.pyc
-*.egg-info
-build/
