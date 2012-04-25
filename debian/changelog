@@ -1,3 +1,17 @@
+buildbot-slave (0.8.6p1-1) unstable; urgency=low
+
+  * New upstream release
+  * Drop deb-bug-657517.patch (already in upstream).
+  * debian/control:
+    - bump Standards-Version to 3.9.3
+    - move Matthias Klose to Uploaders
+    - move Andriy Senkovych to Maintainer
+  * debian/copyright: 
+    - correct syntax for common license (GPL-2)
+    - update Format line to point to copyright-format 1.0
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Thu, 26 Apr 2012 01:00:15 +0300
+
 buildbot-slave (0.8.5-2) unstable; urgency=low
 
   * deb-bug-657517.patch: cherry-pick from upstream(Closes: #657517)

@@ -1,11 +1,11 @@
 Source: buildbot-slave
 Section: devel
 Priority: optional
-Maintainer: Matthias Klose <doko@debian.org>
-Uploaders: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Maintainer: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Uploaders: Matthias Klose <doko@debian.org>
 Build-Depends: debhelper (>= 7.0.50~), python-all (>= 2.6.6-3)
 Homepage: http://buildbot.net
-Standards-Version: 3.9.2
+Standards-Version: 3.9.3
 X-Python-Version: >= 2.5
 
 Package: buildbot-slave
