@@ -32,7 +32,7 @@ from buildslave import util
 # this used to be a CVS $-style "Revision" auto-updated keyword, but since I
 # moved to Darcs as the primary repository, this is updated manually each
 # time this file is changed. The last cvs_ver that was here was 1.51 .
-command_version = "2.13"
+command_version = "2.14"
 
 # version history:
 #  >=1.17: commands are interruptable
@@ -62,6 +62,7 @@ command_version = "2.13"
 #  >= 2.11: Arch, Bazaar, and Monotone removed
 #  >= 2.12: SlaveShellCommand no longer accepts 'keep_stdin_open'
 #  >= 2.13: SlaveFileUploadCommand supports option 'keepstamp'
+#  >= 2.14: RemoveDirectory can delete multiple directories
 
 class Command:
     implements(ISlaveCommand)
@@ -251,6 +252,7 @@ class SourceBaseCommand(Command):
         self.timeout = args.get('timeout', 120)
         self.maxTime = args.get('maxTime', None)
         self.retry = args.get('retry')
+        self.logEnviron = args.get('logEnviron',True)
         self._commandPaths = {}
         # VC-specific subclasses should override this to extract more args.
         # Make sure to upcall!
@@ -500,7 +502,7 @@ class SourceBaseCommand(Command):
         command = ["rm", "-rf", d]
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
                          sendRC=0, timeout=self.timeout, maxTime=self.maxTime,
-                         usePTY=False)
+                         logEnviron=self.logEnviron, usePTY=False)
 
         self.command = c
         # sendRC=0 means the rm command will send stdout/stderr to the
@@ -531,7 +533,7 @@ class SourceBaseCommand(Command):
                                 '-exec', 'chmod', 'u+rwx', '{}', ';' ]
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
                          sendRC=0, timeout=self.timeout, maxTime=self.maxTime,
-                         usePTY=False)
+                         logEnviron=self.logEnviron, usePTY=False)
 
         self.command = c
         d = c.start()
@@ -560,7 +562,7 @@ class SourceBaseCommand(Command):
         command = ['cp', '-R', '-P', '-p', fromdir, todir]
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
                          sendRC=False, timeout=self.timeout, maxTime=self.maxTime,
-                         usePTY=False)
+                         logEnviron=self.logEnviron, usePTY=False)
         self.command = c
         d = c.start()
         d.addCallback(self._abandonOnFailure)
@@ -598,7 +600,8 @@ class SourceBaseCommand(Command):
         # now apply the patch
         c = runprocess.RunProcess(self.builder, command, dir,
                          sendRC=False, timeout=self.timeout,
-                         maxTime=self.maxTime, usePTY=False)
+                         maxTime=self.maxTime, logEnviron=self.logEnviron,
+                         usePTY=False)
         self.command = c
         d = c.start()
         

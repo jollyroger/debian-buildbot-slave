@@ -24,15 +24,6 @@ from buildslave import runprocess
 from buildslave.commands import base, utils
 
 class MakeDirectory(base.Command):
-    """This is a Command which creates a directory. The args dict contains
-    the following keys:
-
-        - ['dir'] (required): subdirectory which the command will create,
-                                  relative to the builder dir
-
-    MakeDirectory creates the following status messages:
-        - {'rc': rc} : when the process has terminated
-    """
 
     header = "mkdir"
 
@@ -50,33 +41,42 @@ class MakeDirectory(base.Command):
             self.sendStatus({'rc': 1})
 
 class RemoveDirectory(base.Command):
-    """This is a Command which removes a directory. The args dict contains
-    the following keys:
-
-        - ['dir'] (required): subdirectory which the command will create,
-                                  relative to the builder dir
-
-        - ['timeout']:  seconds of silence tolerated before we kill off the
-                        command
-
-        - ['maxTime']:  seconds before we kill off the command
-
-
-    RemoveDirectory creates the following status messages:
-        - {'rc': rc} : when the process has terminated
-    """
 
     header = "rmdir"
 
+    def setup(self,args):
+        self.logEnviron = args.get('logEnviron',True)
+
+
+    @defer.deferredGenerator
     def start(self):
         args = self.args
         # args['dir'] is relative to Builder directory, and is required.
         assert args['dir'] is not None
-        dirname = args['dir']
+        dirnames = args['dir']
 
         self.timeout = args.get('timeout', 120)
         self.maxTime = args.get('maxTime', None)
+        self.rc = 0
+        if type(dirnames) is list:
+            assert len(dirnames) != 0
+            for dirname in dirnames:
+                wfd = defer.waitForDeferred(self.removeSingleDir(dirname))
+                yield wfd
+                res = wfd.getResult()
+                # Even if single removal of single file/dir consider it as
+                # failure of whole command, but continue removing other files
+                # Send 'rc' to master to handle failure cases
+                if res != 0:
+                    self.rc = res
+        else:
+            wfd = defer.waitForDeferred(self.removeSingleDir(dirnames))
+            yield wfd
+            self.rc = wfd.getResult()
 
+        self.sendStatus({'rc': self.rc})
+
+    def removeSingleDir(self, dirname):
         # TODO: remove the old tree in the background
         self.dir = os.path.join(self.builder.basedir, dirname)
         if runtime.platformType != "posix":
@@ -87,15 +87,13 @@ class RemoveDirectory(base.Command):
         else:
             d = self._clobber(None)
 
-        # always add the RC, regardless of platform
-        d.addCallbacks(self._sendRC, self._checkAbandoned)
         return d
 
     def _clobber(self, dummy, chmodDone = False):
         command = ["rm", "-rf", self.dir]
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
                          sendRC=0, timeout=self.timeout, maxTime=self.maxTime,
-                         usePTY=False)
+                         logEnviron=self.logEnviron, usePTY=False)
 
         self.command = c
         # sendRC=0 means the rm command will send stdout/stderr to the
@@ -105,9 +103,7 @@ class RemoveDirectory(base.Command):
         # The rm -rf may fail if there is a left-over subdir with chmod 000
         # permissions. So if we get a failure, we attempt to chmod suitable
         # permissions and re-try the rm -rf.
-        if chmodDone:
-            d.addCallback(self._abandonOnFailure)
-        else:
+        if not chmodDone:
             d.addCallback(self._tryChmod)
         return d
 
@@ -126,35 +122,20 @@ class RemoveDirectory(base.Command):
                                 '-exec', 'chmod', 'u+rwx', '{}', ';' ]
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
                          sendRC=0, timeout=self.timeout, maxTime=self.maxTime,
-                         usePTY=False)
+                         logEnviron=self.logEnviron, usePTY=False)
 
         self.command = c
         d = c.start()
-        d.addCallback(self._abandonOnFailure)
         d.addCallback(lambda dummy: self._clobber(dummy, True))
         return d
 
 class CopyDirectory(base.Command):
-    """This is a Command which copies a directory. The args dict contains
-    the following keys:
 
-        - ['fromdir'] (required): subdirectory which the command will copy,
-                                  relative to the builder dir
-        - ['todir'] (required): subdirectory which the command will create,
-                                  relative to the builder dir
+    header = "cpdir"
 
-        - ['timeout']:  seconds of silence tolerated before we kill off the
-                        command
-
-        - ['maxTime']:  seconds before we kill off the command
-
-
-    CopyDirectory creates the following status messages:
-        - {'rc': rc} : when the process has terminated
-    """
-
-    header = "rmdir"
-
+    def setup(self,args):
+        self.logEnviron = args.get('logEnviron',True)
+        
     def start(self):
         args = self.args
         # args['todir'] is relative to Builder directory, and is required.
@@ -185,7 +166,7 @@ class CopyDirectory(base.Command):
             command = ['cp', '-R', '-P', '-p', fromdir, todir]
             c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
                              sendRC=False, timeout=self.timeout, maxTime=self.maxTime,
-                             usePTY=False)
+                             logEnviron=self.logEnviron, usePTY=False)
             self.command = c
             d = c.start()
             d.addCallback(self._abandonOnFailure)
@@ -195,14 +176,6 @@ class CopyDirectory(base.Command):
         return d
 
 class StatFile(base.Command):
-    """This is a command which stats a file on the slave. The args dict contains the following keys:
-
-        - ['file'] (required): file to stat
-
-    StatFile creates the following status messages:
-        - {'rc': rc} : 0 if the file is found, 1 otherwise
-        - {'stat': stat} : if the files is found, stat contains the result of os.stat
-    """
 
     header = "stat"
 
