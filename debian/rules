@@ -9,8 +9,18 @@ override_dh_auto_clean:
 	rm -fR buildbot_slave.egg-info
 	dh_auto_clean
 
+override_dh_auto_test:
+ifneq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
+	@echo "Skipping check (disabled in DEB_BUILD_OPTIONS)."
+else
+	trial --reporter=bwverbose buildslave.test
+endif
+
 override_dh_installinit:
 	mkdir -p ${DESTDIR}/etc/init.d ${DESTDIR}/etc/default
 	cp contrib/init-scripts/buildslave.init.sh ${DESTDIR}/etc/init.d/buildslave
 	cp contrib/init-scripts/buildslave.default ${DESTDIR}/etc/default/buildslave
 	dh_installinit --name=buildslave --onlyscripts
+
+override_dh_installchangelogs:
+	dh_installchangelogs --keep NEWS 
