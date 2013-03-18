@@ -1,3 +1,16 @@
+buildbot-slave (0.8.7p1-1) experimental; urgency=low
+
+  * New upstream release
+  * Enable unit testing during build.
+  * Introduce config for git-buildpackage: debian/gbp.conf.
+  * debian/gbp.conf: use master branch as primary debian branch
+  * Add python-twisted-core and python-mock to build-depends to run unit tests
+  * debian/control:
+    - prettify Depends
+    - bump Standards-Version to 3.9.4.0 (no changes required)
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Mon, 18 Mar 2013 13:01:55 +0200
+
 buildbot-slave (0.8.6p1-1) unstable; urgency=low
 
   * New upstream release
