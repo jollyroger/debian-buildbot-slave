@@ -1,3 +1,9 @@
+buildbot-slave (0.8.7p1-2) unstable; urgency=low
+
+  * Upload to unstable.
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Wed, 07 Aug 2013 16:14:47 +0300
+
 buildbot-slave (0.8.7p1-1) experimental; urgency=low
 
   * New upstream release
