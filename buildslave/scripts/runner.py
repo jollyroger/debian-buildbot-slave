@@ -16,22 +16,14 @@
 # N.B.: don't import anything that might pull in a reactor yet. Some of our
 # subcommands want to load modules that need the gtk reactor.
 import os, sys, re, time
+from buildslave.scripts import base
 from twisted.python import usage
-
-def isBuildslaveDir(dir):
-    buildbot_tac = os.path.join(dir, "buildbot.tac")
-    if not os.path.isfile(buildbot_tac):
-        print "no buildbot.tac"
-        return False
-
-    contents = open(buildbot_tac, "r").read()
-    return "Application('buildslave')" in contents
 
 # the create/start/stop commands should all be run as the same user,
 # preferably a separate 'buildbot' account.
 
-# Note that the terms 'options' and 'config' are used intechangeably here - in
-# fact, they are intercanged several times.  Caveat legator.
+# Note that the terms 'options' and 'config' are used interchangeably here - in
+# fact, they are interchanged several times.  Caveat legator.
 
 class Maker:
     def __init__(self, config):
@@ -141,9 +133,11 @@ keepalive = %(keepalive)d
 usepty = %(usepty)d
 umask = %(umask)s
 maxdelay = %(maxdelay)d
+allow_shutdown = %(allow-shutdown)s
 
 s = BuildSlave(buildmaster_host, port, slavename, passwd, basedir,
-               keepalive, usepty, umask=umask, maxdelay=maxdelay)
+               keepalive, usepty, umask=umask, maxdelay=maxdelay,
+               allow_shutdown=allow_shutdown)
 s.setServiceParent(application)
 
 """]
@@ -167,6 +161,10 @@ def createSlave(config):
         print " expecting something more like localhost:8007 or localhost"
         raise
 
+    asd = config['allow-shutdown']
+    if asd:
+        config['allow-shutdown'] = "'%s'" % asd
+
     if config['no-logrotate']:
         slaveTAC = "".join([slaveTACTemplate[0]] + slaveTACTemplate[2:])
     else:
@@ -180,24 +178,33 @@ def createSlave(config):
         print "buildslave configured in %s" % m.basedir
 
 
+class SlaveNotRunning(Exception):
+    """
+    raised when trying to stop slave process that is not running
+    """
 
-def stop(config, signame="TERM", wait=False, returnFalseOnNotRunning=False):
+
+def stopSlave(basedir, quiet, signame="TERM"):
+    """
+    Stop slave process by sending it a signal.
+
+    Using the specified basedir path, read slave process's pid file and
+    try to terminate that process with specified signal.
+
+    @param basedir: buildslave basedir path
+    @param   quite: if False, don't print any messages to stdout
+    @param signame: signal to send to the slave process
+
+    @raise SlaveNotRunning: if slave pid file is not found
+    """
     import signal
-    basedir = config['basedir']
-    quiet = config['quiet']
-
-    if not isBuildslaveDir(config['basedir']):
-        print "not a buildslave directory"
-        sys.exit(1)
 
     os.chdir(basedir)
     try:
         f = open("twistd.pid", "rt")
     except:
-        if returnFalseOnNotRunning:
-            return False
-        if not quiet: print "buildslave not running."
-        sys.exit(0)
+        raise SlaveNotRunning()
+
     pid = int(f.read().strip())
     signum = getattr(signal, "SIG"+signame)
     timer = 0
@@ -207,10 +214,6 @@ def stop(config, signame="TERM", wait=False, returnFalseOnNotRunning=False):
         if e.errno != 3:
             raise
 
-    if not wait:
-        if not quiet:
-            print "sent SIG%s to process" % signame
-        return
     time.sleep(0.1)
     while timer < 10:
         # poll once per second until twistd.pid goes away, up to 10 seconds
@@ -225,15 +228,31 @@ def stop(config, signame="TERM", wait=False, returnFalseOnNotRunning=False):
     if not quiet:
         print "never saw process go away"
 
+
+def stop(config, signame="TERM"):
+    quiet = config['quiet']
+    basedir = config['basedir']
+
+    if not base.isBuildslaveDir(basedir):
+        sys.exit(1)
+
+    try:
+        stopSlave(basedir, quiet, signame)
+    except SlaveNotRunning:
+        if not quiet:
+            print "buildslave not running"
+
+
 def restart(config):
     quiet = config['quiet']
 
-    if not isBuildslaveDir(config['basedir']):
-        print "not a buildslave directory"
+    if not base.isBuildslaveDir(config['basedir']):
         sys.exit(1)
 
     from buildslave.scripts.startup import start
-    if not stop(config, wait=True, returnFalseOnNotRunning=True):
+    try:
+        stopSlave(config['basedir'], quiet)
+    except SlaveNotRunning:
         if not quiet:
             print "no old buildslave process found to stop"
     if not quiet:
@@ -302,6 +321,10 @@ class UpgradeSlaveOptions(MakerBase):
 
 def upgradeSlave(config):
     basedir = os.path.expanduser(config['basedir'])
+
+    if not base.isBuildslaveDir(basedir):
+        sys.exit(1)
+
     buildbot_tac = open(os.path.join(basedir, "buildbot.tac")).read()
     new_buildbot_tac = buildbot_tac.replace(
         "from buildbot.slave.bot import BuildSlave",
@@ -315,7 +338,7 @@ def upgradeSlave(config):
     return 0
 
 
-class SlaveOptions(MakerBase):
+class CreateSlaveOptions(MakerBase):
     optFlags = [
         ["force", "f", "Re-use an existing directory"],
         ["relocatable", "r",
@@ -336,8 +359,11 @@ class SlaveOptions(MakerBase):
          "size at which to rotate twisted log files"],
         ["log-count", "l", "10",
          "limit the number of kept old twisted log files (None for unlimited)"],
+        ["allow-shutdown", "a", None,
+         "Allows the buildslave to initiate a graceful shutdown. One of "
+         "'signal' or 'file'"]
         ]
-    
+
     longdesc = """
     This command creates a buildslave working directory and buildbot.tac
     file. The bot will use the <name> and <passwd> arguments to authenticate
@@ -355,8 +381,8 @@ class SlaveOptions(MakerBase):
         return "Usage:    buildslave create-slave [options] <basedir> <master> <name> <passwd>"
 
     def parseArgs(self, *args):
-        if len(args) < 4:
-            raise usage.UsageError("command needs more arguments")
+        if len(args) != 4:
+            raise usage.UsageError("incorrect number of arguments")
         basedir, master, name, passwd = args
         if master[:5] == "http:":
             raise usage.UsageError("<master> is not a URL - do not use URL")
@@ -367,14 +393,18 @@ class SlaveOptions(MakerBase):
 
     def postOptions(self):
         MakerBase.postOptions(self)
-        self['usepty'] = int(self['usepty'])
-        self['keepalive'] = int(self['keepalive'])
-        self['maxdelay'] = int(self['maxdelay'])
-        if not re.match('^\d+$', self['log-size']):
-            raise usage.UsageError("log-size parameter needs to be an int")
+
+        # check and convert numeric parameters
+        for argument in ["usepty", "keepalive", "maxdelay", "log-size"]:
+            try:
+                self[argument] = int(self[argument])
+            except ValueError:
+                raise usage.UsageError("%s parameter needs to be an number" \
+                                                                    % argument)
+
         if not re.match('^\d+$', self['log-count']) and \
                 self['log-count'] != 'None':
-            raise usage.UsageError("log-count parameter needs to be an int "+
+            raise usage.UsageError("log-count parameter needs to be an number"
                                    " or None")
 
 class Options(usage.Options):
@@ -382,7 +412,7 @@ class Options(usage.Options):
 
     subCommands = [
         # the following are all admin commands
-        ['create-slave', None, SlaveOptions,
+        ['create-slave', None, CreateSlaveOptions,
          "Create and populate a directory for a new buildslave"],
         ['upgrade-slave', None, UpgradeSlaveOptions,
          "Upgrade an existing buildslave directory for the current version"],
@@ -425,14 +455,10 @@ def run():
     elif command == "upgrade-slave":
         upgradeSlave(so)
     elif command == "start":
-        if not isBuildslaveDir(so['basedir']):
-            print "not a buildslave directory"
-            sys.exit(1)
-
         from buildslave.scripts.startup import start
         start(so)
     elif command == "stop":
-        stop(so, wait=True)
+        stop(so)
     elif command == "restart":
         restart(so)
     sys.exit(0)
