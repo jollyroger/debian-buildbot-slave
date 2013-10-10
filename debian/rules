@@ -3,7 +3,7 @@
 DESTDIR = debian/buildbot-slave
 
 %:
-	dh $@ --with python2
+	dh $@ --with python2,bash-completion
 
 override_dh_auto_clean:
 	rm -fR buildbot_slave.egg-info
