@@ -17,20 +17,26 @@
 Support for running 'shell commands'
 """
 
-import sys
 import os
-import signal
-import types
 import re
-import subprocess
-import traceback
+import signal
 import stat
+import subprocess
+import sys
+import traceback
+import types
+
 from collections import deque
 from tempfile import NamedTemporaryFile
 
-from twisted.python import runtime, log
+from twisted.internet import defer
+from twisted.internet import error
+from twisted.internet import protocol
+from twisted.internet import reactor
+from twisted.internet import task
+from twisted.python import log
+from twisted.python import runtime
 from twisted.python.win32 import quoteArguments
-from twisted.internet import reactor, defer, protocol, task, error
 
 from buildslave import util
 from buildslave.exceptions import AbandonChain
@@ -38,27 +44,47 @@ from buildslave.exceptions import AbandonChain
 if runtime.platformType == 'posix':
     from twisted.internet.process import Process
 
+
+def win32_batch_quote(cmd_list):
+    # Quote cmd_list to a string that is suitable for inclusion in a
+    # Windows batch file. This is not quite the same as quoting it for the
+    # shell, as cmd.exe doesn't support the %% escape in interactive mode.
+    # As an exception, a lone pipe as an argument is not escaped, and
+    # becomes a shell pipe.
+    def escape_arg(arg):
+        if arg == '|':
+            return arg
+
+        arg = quoteArguments([arg])
+        # escape shell special characters
+        arg = re.sub(r'[@()^"<>&|]', r'^\g<0>', arg)
+        # prevent variable expansion
+        return arg.replace('%', '%%')
+
+    return ' '.join(map(escape_arg, cmd_list))
+
+
 def shell_quote(cmd_list):
     # attempt to quote cmd_list such that a shell will properly re-interpret
-    # it.  The pipes module is only available on UNIX, and Windows "shell"
-    # quoting is indescribably convoluted - so much so that it's not clear it's
-    # reversible.  Also, the quote function is undocumented (although it looks
-    # like it will be documentd soon: http://bugs.python.org/issue9723).
-    # Finally, it has a nasty bug in some versions where an empty string is not
-    # quoted.
+    # it.  The pipes module is only available on UNIX; also, the quote
+    # function is undocumented (although it looks like it will be documented
+    # soon: http://bugs.python.org/issue9723). Finally, it has a nasty bug
+    # in some versions where an empty string is not quoted.
     #
     # So:
     #  - use pipes.quote on UNIX, handling '' as a special case
-    #  - use Python's repr() on Windows, as a best effort
+    #  - use our own custom function on Windows
     if runtime.platformType == 'win32':
-        return " ".join([ `e` for e in cmd_list ])
+        return win32_batch_quote(cmd_list)
     else:
         import pipes
+
         def quote(e):
             if not e:
                 return '""'
             return pipes.quote(e)
-        return " ".join([ quote(e) for e in cmd_list ])
+        return " ".join([quote(e) for e in cmd_list])
+
 
 class LogFileWatcher:
     POLL_INTERVAL = 2
@@ -106,13 +132,13 @@ class LogFileWatcher:
         if not self.started:
             s = self.statFile()
             if s == self.old_logfile_stats:
-                return # not started yet
+                return  # not started yet
             if not s:
                 # the file was there, but now it's deleted. Forget about the
                 # initial state, clearly the process has deleted the logfile
                 # in preparation for creating a new one.
                 self.old_logfile_stats = None
-                return # no file to work with
+                return  # no file to work with
             self.f = open(self.logfile, "rb")
             # if we only want new lines, seek to
             # where we stat'd so we only find new
@@ -130,6 +156,7 @@ class LogFileWatcher:
 
 if runtime.platformType == 'posix':
     class ProcGroupProcess(Process):
+
         """Simple subclass of Process to also make the spawned process a process
         group leader, so we can kill all members of the process group."""
 
@@ -166,9 +193,11 @@ class RunProcessPP(protocol.ProcessProtocol):
             self.transport.pgid = self.transport.pid
 
         if self.pending_stdin:
-            if self.debug: log.msg(" writing to stdin")
+            if self.debug:
+                log.msg(" writing to stdin")
             self.transport.write(self.pending_stdin)
-        if self.debug: log.msg(" closing stdin")
+        if self.debug:
+            log.msg(" closing stdin")
         self.transport.closeStdin()
 
     def outReceived(self, data):
@@ -204,6 +233,7 @@ class RunProcessPP(protocol.ProcessProtocol):
 
 
 class RunProcess:
+
     """
     This is a helper class, used by slave commands to run programs in a child
     shell.
@@ -212,11 +242,11 @@ class RunProcess:
     notreally = False
     BACKUP_TIMEOUT = 5
     interruptSignal = "KILL"
-    CHUNK_LIMIT = 128*1024
+    CHUNK_LIMIT = 128 * 1024
 
     # Don't send any data until at least BUFFER_SIZE bytes have been collected
     # or BUFFER_TIMEOUT elapsed
-    BUFFER_SIZE = 64*1024
+    BUFFER_SIZE = 64 * 1024
     BUFFER_TIMEOUT = 5
 
     # For sending elapsed time:
@@ -234,8 +264,8 @@ class RunProcess:
     def __init__(self, builder, command,
                  workdir, environ=None,
                  sendStdout=True, sendStderr=True, sendRC=True,
-                 timeout=None, maxTime=None, initialStdin=None,
-                 keepStdout=False, keepStderr=False,
+                 timeout=None, maxTime=None, sigtermTime=None,
+                 initialStdin=None, keepStdout=False, keepStderr=False,
                  logEnviron=True, logfiles={}, usePTY="slave-config",
                  useProcGroup=True):
         """
@@ -254,7 +284,13 @@ class RunProcess:
         """
 
         self.builder = builder
-
+        if isinstance(command, list):
+            def obfus(w):
+                if (isinstance(w, tuple) and len(w) == 3
+                        and w[0] == 'obfuscated'):
+                    return util.Obfuscated(w[1], w[2])
+                return w
+            command = [obfus(w) for w in command]
         # We need to take unicode commands and arguments and encode them using
         # the appropriate encoding for the slave.  This is mostly platform
         # specific, but can be overridden in the slave's buildbot.tac file.
@@ -265,6 +301,7 @@ class RunProcess:
         # spawnProcess which checks that arguments are regular strings or
         # unicode strings that can be encoded as ascii (which generates a
         # warning).
+
         def to_str(cmd):
             if isinstance(cmd, (tuple, list)):
                 for i, a in enumerate(cmd):
@@ -295,11 +332,12 @@ class RunProcess:
                     # turned in to a string.
                     environ[key] = os.pathsep.join(environ[key])
 
-            if environ.has_key('PYTHONPATH'):
+            if "PYTHONPATH" in environ:
                 environ['PYTHONPATH'] += os.pathsep + "${PYTHONPATH}"
 
             # do substitution on variable values matching pattern: ${name}
-            p = re.compile('\${([0-9a-zA-Z_]*)}')
+            p = re.compile(r'\${([0-9a-zA-Z_]*)}')
+
             def subst(match):
                 return os.environ.get(match.group(1), "")
             newenv = {}
@@ -311,24 +349,26 @@ class RunProcess:
                 if v is not None:
                     if not isinstance(v, basestring):
                         raise RuntimeError("'env' values must be strings or "
-                                "lists; key '%s' is incorrect" % (key,))
+                                           "lists; key '%s' is incorrect" % (key,))
                     newenv[key] = p.sub(subst, v)
 
             self.environ = newenv
-        else: # not environ
+        else:  # not environ
             self.environ = os.environ.copy()
         self.initialStdin = initialStdin
         self.logEnviron = logEnviron
         self.timeout = timeout
-        self.timer = None
+        self.ioTimeoutTimer = None
+        self.sigtermTime = sigtermTime
         self.maxTime = maxTime
-        self.maxTimer = None
+        self.maxTimeoutTimer = None
+        self.killTimer = None
         self.keepStdout = keepStdout
         self.keepStderr = keepStderr
 
         self.buffered = deque()
         self.buflen = 0
-        self.buftimer = None
+        self.sendBuffersTimer = None
 
         if usePTY == "slave-config":
             self.usePTY = self.builder.usePTY
@@ -353,13 +393,13 @@ class RunProcess:
         self.useProcGroup = useProcGroup
 
         self.logFileWatchers = []
-        for name,filevalue in self.logfiles.items():
+        for name, filevalue in self.logfiles.items():
             filename = filevalue
             follow = False
 
             # check for a dictionary of options
             # filename is required, others are optional
-            if type(filevalue) == dict:
+            if isinstance(filevalue, dict):
                 filename = filevalue['filename']
                 follow = filevalue.get('follow', False)
 
@@ -400,8 +440,8 @@ class RunProcess:
             os.makedirs(self.workdir)
         log.msg("RunProcess._startCommand")
         if self.notreally:
-            self._addToBuffers('header', "command '%s' in dir %s" % \
-                             (self.fake_command, self.workdir))
+            self._addToBuffers('header', "command '%s' in dir %s" %
+                               (self.fake_command, self.workdir))
             self._addToBuffers('header', "(not really)\n")
             self.finished(None, 0)
             return
@@ -410,9 +450,10 @@ class RunProcess:
 
         self.using_comspec = False
         if type(self.command) in types.StringTypes:
-            if runtime.platformType  == 'win32':
-                argv = os.environ['COMSPEC'].split() # allow %COMSPEC% to have args
-                if '/c' not in argv: argv += ['/c']
+            if runtime.platformType == 'win32':
+                argv = os.environ['COMSPEC'].split()  # allow %COMSPEC% to have args
+                if '/c' not in argv:
+                    argv += ['/c']
                 argv += [self.command]
                 self.using_comspec = True
             else:
@@ -428,8 +469,9 @@ class RunProcess:
             # handle path searching, etc.
             if runtime.platformType == 'win32' and not \
                     (self.command[0].lower().endswith(".exe") and os.path.isabs(self.command[0])):
-                argv = os.environ['COMSPEC'].split() # allow %COMSPEC% to have args
-                if '/c' not in argv: argv += ['/c']
+                argv = os.environ['COMSPEC'].split()  # allow %COMSPEC% to have args
+                if '/c' not in argv:
+                    argv += ['/c']
                 argv += list(self.command)
                 self.using_comspec = True
             else:
@@ -446,7 +488,7 @@ class RunProcess:
         # self.stdin is handled in RunProcessPP.connectionMade
 
         log.msg(" " + display)
-        self._addToBuffers('header', display+"\n")
+        self._addToBuffers('header', display + "\n")
 
         # then comes the secondary information
         msg = " in dir %s" % (self.workdir,)
@@ -463,22 +505,21 @@ class RunProcess:
                 unit = "secs"
             msg += " (maxTime %d %s)" % (self.maxTime, unit)
         log.msg(" " + msg)
-        self._addToBuffers('header', msg+"\n")
+        self._addToBuffers('header', msg + "\n")
 
         msg = " watching logfiles %s" % (self.logfiles,)
         log.msg(" " + msg)
-        self._addToBuffers('header', msg+"\n")
+        self._addToBuffers('header', msg + "\n")
 
         # then the obfuscated command array for resolving unambiguity
         msg = " argv: %s" % (self.fake_command,)
         log.msg(" " + msg)
-        self._addToBuffers('header', msg+"\n")
+        self._addToBuffers('header', msg + "\n")
 
         # then the environment, since it sometimes causes problems
         if self.logEnviron:
             msg = " environment:\n"
-            env_names = self.environ.keys()
-            env_names.sort()
+            env_names = sorted(self.environ.keys())
             for name in env_names:
                 msg += "  %s=%s\n" % (name, self.environ[name])
             log.msg(" environment: %s" % (self.environ,))
@@ -487,11 +528,11 @@ class RunProcess:
         if self.initialStdin:
             msg = " writing %d bytes to stdin" % len(self.initialStdin)
             log.msg(" " + msg)
-            self._addToBuffers('header', msg+"\n")
+            self._addToBuffers('header', msg + "\n")
 
         msg = " using PTY: %s" % bool(self.usePTY)
         log.msg(" " + msg)
-        self._addToBuffers('header', msg+"\n")
+        self._addToBuffers('header', msg + "\n")
 
         # put data into stdin and close it, if necessary.  This will be
         # buffered until connectionMade is called
@@ -503,24 +544,24 @@ class RunProcess:
         # start the process
 
         self.process = self._spawnProcess(
-                                 self.pp, argv[0], argv,
-                                 self.environ,
-                                 self.workdir,
-                                 usePTY=self.usePTY)
+            self.pp, argv[0], argv,
+            self.environ,
+            self.workdir,
+            usePTY=self.usePTY)
 
         # set up timeouts
 
         if self.timeout:
-            self.timer = self._reactor.callLater(self.timeout, self.doTimeout)
+            self.ioTimeoutTimer = self._reactor.callLater(self.timeout, self.doTimeout)
 
         if self.maxTime:
-            self.maxTimer = self._reactor.callLater(self.maxTime, self.doMaxTimeout)
+            self.maxTimeoutTimer = self._reactor.callLater(self.maxTime, self.doMaxTimeout)
 
         for w in self.logFileWatchers:
             w.start()
 
     def _spawnProcess(self, processProtocol, executable, args=(), env={},
-            path=None, uid=None, gid=None, usePTY=False, childFDs=None):
+                      path=None, uid=None, gid=None, usePTY=False, childFDs=None):
         """private implementation of reactor.spawnProcess, to allow use of
         L{ProcGroupProcess}"""
 
@@ -528,7 +569,7 @@ class RunProcess:
         if runtime.platformType == 'posix':
             if self.useProcGroup and not usePTY:
                 return ProcGroupProcess(reactor, executable, args, env, path,
-                                    processProtocol, uid, gid, childFDs)
+                                        processProtocol, uid, gid, childFDs)
 
         # fall back
         if self.using_comspec:
@@ -539,27 +580,22 @@ class RunProcess:
                                         path, usePTY=usePTY)
 
     def _spawnAsBatch(self, processProtocol, executable, args, env,
-            path, usePTY):
+                      path, usePTY):
         """A cheat that routes around the impedance mismatch between
         twisted and cmd.exe with respect to escaping quotes"""
 
-        tf = NamedTemporaryFile(dir='.',suffix=".bat",delete=False)
-        #echo off hides this cheat from the log files.
-        tf.write( "@echo off\n" )
+        tf = NamedTemporaryFile(dir='.', suffix=".bat", delete=False)
+        # echo off hides this cheat from the log files.
+        tf.write("@echo off\n")
         if type(self.command) in types.StringTypes:
-            tf.write( self.command )
+            tf.write(self.command)
         else:
-            def maybe_escape_pipes(arg):
-                if arg != '|':
-                    return arg.replace('|','^|')
-                else:
-                    return '|'
-            cmd = [maybe_escape_pipes(arg) for arg in self.command]
-            tf.write( quoteArguments(cmd) )
+            tf.write(win32_batch_quote(self.command))
         tf.close()
 
-        argv = os.environ['COMSPEC'].split() # allow %COMSPEC% to have args
-        if '/c' not in argv: argv += ['/c']
+        argv = os.environ['COMSPEC'].split()  # allow %COMSPEC% to have args
+        if '/c' not in argv:
+            argv += ['/c']
         argv += [tf.name]
 
         def unlink_temp(result):
@@ -577,20 +613,20 @@ class RunProcess:
         """
         LIMIT = self.CHUNK_LIMIT
         for i in range(0, len(data), LIMIT):
-            yield data[i:i+LIMIT]
+            yield data[i:i + LIMIT]
 
     def _collapseMsg(self, msg):
         """
         Take msg, which is a dictionary of lists of output chunks, and
-        concatentate all the chunks into a single string
+        concatenate all the chunks into a single string
         """
         retval = {}
-        for log in msg:
-            data = "".join(msg[log])
-            if isinstance(log, tuple) and log[0] == 'log':
-                retval['log'] = (log[1], data)
+        for logname in msg:
+            data = "".join(msg[logname])
+            if isinstance(logname, tuple) and logname[0] == 'log':
+                retval['log'] = (logname[1], data)
             else:
-                retval[log] = data
+                retval[logname] = data
         return retval
 
     def _sendMessage(self, msg):
@@ -603,7 +639,7 @@ class RunProcess:
         self.sendStatus(msg)
 
     def _bufferTimeout(self):
-        self.buftimer = None
+        self.sendBuffersTimer = None
         self._sendBuffers()
 
     def _sendBuffers(self):
@@ -639,7 +675,8 @@ class RunProcess:
             # Chunkify the log data to make sure we're not sending more than
             # CHUNK_LIMIT at a time
             for chunk in self._chunkForSend(data):
-                if len(chunk) == 0: continue
+                if len(chunk) == 0:
+                    continue
                 logdata.append(chunk)
                 msg_size += len(chunk)
                 if msg_size >= self.CHUNK_LIMIT:
@@ -653,10 +690,10 @@ class RunProcess:
         self.buflen = 0
         if logdata:
             self._sendMessage(msg)
-        if self.buftimer:
-            if self.buftimer.active():
-                self.buftimer.cancel()
-            self.buftimer = None
+        if self.sendBuffersTimer:
+            if self.sendBuffersTimer.active():
+                self.sendBuffersTimer.cancel()
+            self.sendBuffersTimer = None
 
     def _addToBuffers(self, logname, data):
         """
@@ -671,8 +708,8 @@ class RunProcess:
         self.buffered.append((logname, data))
         if self.buflen > self.BUFFER_SIZE:
             self._sendBuffers()
-        elif not self.buftimer:
-            self.buftimer = self._reactor.callLater(self.BUFFER_TIMEOUT, self._bufferTimeout)
+        elif not self.sendBuffersTimer:
+            self.sendBuffersTimer = self._reactor.callLater(self.BUFFER_TIMEOUT, self._bufferTimeout)
 
     def addStdout(self, data):
         if self.sendStdout:
@@ -680,8 +717,8 @@ class RunProcess:
 
         if self.keepStdout:
             self.stdout += data
-        if self.timer:
-            self.timer.reset(self.timeout)
+        if self.ioTimeoutTimer:
+            self.ioTimeoutTimer.reset(self.timeout)
 
     def addStderr(self, data):
         if self.sendStderr:
@@ -689,18 +726,18 @@ class RunProcess:
 
         if self.keepStderr:
             self.stderr += data
-        if self.timer:
-            self.timer.reset(self.timeout)
+        if self.ioTimeoutTimer:
+            self.ioTimeoutTimer.reset(self.timeout)
 
     def addLogfile(self, name, data):
-        self._addToBuffers( ('log', name), data)
+        self._addToBuffers(('log', name), data)
 
-        if self.timer:
-            self.timer.reset(self.timeout)
+        if self.ioTimeoutTimer:
+            self.ioTimeoutTimer.reset(self.timeout)
 
     def finished(self, sig, rc):
         self.elapsedTime = util.now(self._reactor) - self.startTime
-        log.msg("command finished with signal %s, exit code %s, elapsedTime: %0.6f" % (sig,rc,self.elapsedTime))
+        log.msg("command finished with signal %s, exit code %s, elapsedTime: %0.6f" % (sig, rc, self.elapsedTime))
         for w in self.logFileWatchers:
             # this will send the final updates
             w.stop()
@@ -713,15 +750,7 @@ class RunProcess:
                     {'header': "process killed by signal %d\n" % sig})
             self.sendStatus({'rc': rc})
         self.sendStatus({'header': "elapsedTime=%0.6f\n" % self.elapsedTime})
-        if self.timer:
-            self.timer.cancel()
-            self.timer = None
-        if self.maxTimer:
-            self.maxTimer.cancel()
-            self.maxTimer = None
-        if self.buftimer:
-            self.buftimer.cancel()
-            self.buftimer = None
+        self._cancelTimers()
         d = self.deferred
         self.deferred = None
         if d:
@@ -732,15 +761,7 @@ class RunProcess:
     def failed(self, why):
         self._sendBuffers()
         log.msg("RunProcess.failed: command failed: %s" % (why,))
-        if self.timer:
-            self.timer.cancel()
-            self.timer = None
-        if self.maxTimer:
-            self.maxTimer.cancel()
-            self.maxTimer = None
-        if self.buftimer:
-            self.buftimer.cancel()
-            self.buftimer = None
+        self._cancelTimers()
         d = self.deferred
         self.deferred = None
         if d:
@@ -749,52 +770,61 @@ class RunProcess:
             log.msg("Hey, command %s finished twice" % self)
 
     def doTimeout(self):
-        self.timer = None
-        msg = "command timed out: %d seconds without output" % self.timeout
+        self.ioTimeoutTimer = None
+        msg = "command timed out: %d seconds without output running %s" % (self.timeout, self.fake_command)
         self.kill(msg)
 
     def doMaxTimeout(self):
-        self.maxTimer = None
-        msg = "command timed out: %d seconds elapsed" % self.maxTime
+        self.maxTimeoutTimer = None
+        msg = "command timed out: %d seconds elapsed running %s" % (self.maxTime, self.fake_command)
         self.kill(msg)
 
-    def kill(self, msg):
-        # This may be called by the timeout, or when the user has decided to
-        # abort this build.
-        self._sendBuffers()
-        if self.timer:
-            self.timer.cancel()
-            self.timer = None
-        if self.maxTimer:
-            self.maxTimer.cancel()
-            self.maxTimer = None
-        if self.buftimer:
-            self.buftimer.cancel()
-            self.buftimer = None
-        msg += ", attempting to kill"
-        log.msg(msg)
-        self.sendStatus({'header': "\n" + msg + "\n"})
+    def isDead(self):
+        pid = int(self.process.pid)
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True  # dead
+        return False  # alive
 
-        # let the PP know that we are killing it, so that it can ensure that
-        # the exit status comes out right
-        self.pp.killed = True
+    def checkProcess(self):
+        if not self.isDead():
+            hit = self.sendSig(self.interruptSignal)
+        else:
+            hit = 1
+        self.cleanUp(hit)
 
-        # keep track of whether we believe we've successfully killed something
+    def cleanUp(self, hit):
+        if not hit:
+            log.msg("signalProcess/os.kill failed both times")
+
+        if runtime.platformType == "posix":
+            # we only do this under posix because the win32eventreactor
+            # blocks here until the process has terminated, while closing
+            # stderr. This is weird.
+            self.pp.transport.loseConnection()
+
+        if self.deferred:
+            # finished ought to be called momentarily. Just in case it doesn't,
+            # set a timer which will abandon the command.
+            self.killTimer = self._reactor.callLater(self.BACKUP_TIMEOUT,
+                                                     self.doBackupTimeout)
+
+    def sendSig(self, interruptSignal):
         hit = 0
-
         # try signalling the process group
         if not hit and self.useProcGroup and runtime.platformType == "posix":
-            sig = getattr(signal, "SIG"+ self.interruptSignal, None)
+            sig = getattr(signal, "SIG" + interruptSignal, None)
 
             if sig is None:
-                log.msg("signal module is missing SIG%s" % self.interruptSignal)
+                log.msg("signal module is missing SIG%s" % interruptSignal)
             elif not hasattr(os, "kill"):
                 log.msg("os module is missing the 'kill' function")
             elif self.process.pgid is None:
                 log.msg("self.process has no pgid")
             else:
                 log.msg("trying to kill process group %d" %
-                                                (self.process.pgid,))
+                        (self.process.pgid,))
                 try:
                     os.kill(-self.process.pgid, sig)
                     log.msg(" signal %s sent successfully" % sig)
@@ -808,20 +838,26 @@ class RunProcess:
                     pass
 
         elif runtime.platformType == "win32":
-            if self.interruptSignal == None:
-                log.msg("self.interruptSignal==None, only pretending to kill child")
+            if interruptSignal is None:
+                log.msg("interruptSignal==None, only pretending to kill child")
             elif self.process.pid is not None:
-                log.msg("using TASKKILL /F PID /T to kill pid %s" % self.process.pid)
-                subprocess.check_call("TASKKILL /F /PID %s /T" % self.process.pid)
-                log.msg("taskkill'd pid %s" % self.process.pid)
-                hit = 1
+                if interruptSignal == "TERM":
+                    log.msg("using TASKKILL PID /T to kill pid %s" % self.process.pid)
+                    subprocess.check_call("TASKKILL /PID %s /T" % self.process.pid)
+                    log.msg("taskkill'd pid %s" % self.process.pid)
+                    hit = 1
+                elif interruptSignal == "KILL":
+                    log.msg("using TASKKILL PID /F /T to kill pid %s" % self.process.pid)
+                    subprocess.check_call("TASKKILL /F /PID %s /T" % self.process.pid)
+                    log.msg("taskkill'd pid %s" % self.process.pid)
+                    hit = 1
 
         # try signalling the process itself (works on Windows too, sorta)
         if not hit:
             try:
-                log.msg("trying process.signalProcess('%s')" % (self.interruptSignal,))
-                self.process.signalProcess(self.interruptSignal)
-                log.msg(" signal %s sent successfully" % (self.interruptSignal,))
+                log.msg("trying process.signalProcess('%s')" % (interruptSignal,))
+                self.process.signalProcess(interruptSignal)
+                log.msg(" signal %s sent successfully" % (interruptSignal,))
                 hit = 1
             except OSError:
                 log.err("from process.signalProcess:")
@@ -833,27 +869,43 @@ class RunProcess:
                 # been called already or will be called shortly
                 pass
 
-        if not hit:
-            log.msg("signalProcess/os.kill failed both times")
+        return hit
 
-        if runtime.platformType == "posix":
-            # we only do this under posix because the win32eventreactor
-            # blocks here until the process has terminated, while closing
-            # stderr. This is weird.
-            self.pp.transport.loseConnection()
+    def kill(self, msg):
+        # This may be called by the timeout, or when the user has decided to
+        # abort this build.
+        self._sendBuffers()
+        self._cancelTimers()
+        msg += ", attempting to kill"
+        log.msg(msg)
+        self.sendStatus({'header': "\n" + msg + "\n"})
 
-        if self.deferred:
-            # finished ought to be called momentarily. Just in case it doesn't,
-            # set a timer which will abandon the command.
-            self.timer = self._reactor.callLater(self.BACKUP_TIMEOUT,
-                                       self.doBackupTimeout)
+        # let the PP know that we are killing it, so that it can ensure that
+        # the exit status comes out right
+        self.pp.killed = True
+
+        sendSigterm = self.sigtermTime is not None
+        if sendSigterm:
+            self.sendSig("TERM")
+            self.sigtermTimer = self._reactor.callLater(self.sigtermTime, self.checkProcess)
+        else:
+            hit = self.sendSig(self.interruptSignal)
+            self.cleanUp(hit)
 
     def doBackupTimeout(self):
         log.msg("we tried to kill the process, and it wouldn't die.."
                 " finish anyway")
-        self.timer = None
-        self.sendStatus({'header': "SIGKILL failed to kill process\n"})
+        self.killTimer = None
+        signalName = "SIG" + self.interruptSignal
+        self.sendStatus({'header': signalName + " failed to kill process\n"})
         if self.sendRC:
             self.sendStatus({'header': "using fake rc=-1\n"})
             self.sendStatus({'rc': -1})
-        self.failed(RuntimeError("SIGKILL failed to kill process"))
+        self.failed(RuntimeError(signalName + " failed to kill process"))
+
+    def _cancelTimers(self):
+        for timerName in ('ioTimeoutTimer', 'killTimer', 'maxTimeoutTimer', 'sendBuffersTimer', 'sigtermTimer'):
+            timer = getattr(self, timerName, None)
+            if timer:
+                timer.cancel()
+                setattr(self, timerName, None)

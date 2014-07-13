@@ -13,12 +13,16 @@
 #
 # Copyright Buildbot Team Members
 
-import os
-import sys
-import mock
-import shutil
 import __builtin__
 import cStringIO
+import errno
+import mock
+import os
+import shutil
+import sys
+
+from buildslave.scripts import base
+
 
 def nl(s):
     """Convert the given string to the native newline format, assuming it is
@@ -28,7 +32,9 @@ def nl(s):
         return s
     return s.replace('\n', os.linesep)
 
+
 class BasedirMixin(object):
+
     """Mix this in and call setUpBasedir and tearDownBasedir to set up
     a clean basedir with a name given in self.basedir."""
 
@@ -41,7 +47,20 @@ class BasedirMixin(object):
         if os.path.exists(self.basedir):
             shutil.rmtree(self.basedir)
 
+
+class IsBuildslaveDirMixin:
+
+    """
+    Mixin for setting up mocked base.isBuildslaveDir() function
+    """
+
+    def setupUpIsBuildslaveDir(self, return_value):
+        self.isBuildslaveDir = mock.Mock(return_value=return_value)
+        self.patch(base, "isBuildslaveDir", self.isBuildslaveDir)
+
+
 class PatcherMixin(object):
+
     """
     Mix this in to get a few special-cased patching methods
     """
@@ -58,11 +77,14 @@ class PatcherMixin(object):
             os.uname = replacement
 
 
-class OpenFileMixin:
+class FileIOMixin:
+
     """
-    Mixin for patching open() to simulate successful reads and I/O errors.
+    Mixin for patching open(), read() and write() to simulate successful
+    I/O operations and various I/O errors.
     """
-    def setUpOpen(self, file_contents):
+
+    def setUpOpen(self, file_contents="dummy-contents"):
         """
         patch open() to return file object with provided contents.
 
@@ -70,14 +92,16 @@ class OpenFileMixin:
                               read() method
         """
         # create mocked file object that returns 'file_contents' on read()
+        # and tracks any write() calls
         self.fileobj = mock.Mock()
         self.fileobj.read = mock.Mock(return_value=file_contents)
+        self.fileobj.write = mock.Mock()
 
         # patch open() to return mocked object
         self.open = mock.Mock(return_value=self.fileobj)
         self.patch(__builtin__, "open", self.open)
 
-    def setUpOpenError(self, errno, strerror="dummy-msg",
+    def setUpOpenError(self, errno=errno.ENOENT, strerror="dummy-msg",
                        filename="dummy-file"):
         """
         patch open() to raise IOError
@@ -89,7 +113,7 @@ class OpenFileMixin:
         self.open = mock.Mock(side_effect=IOError(errno, strerror, filename))
         self.patch(__builtin__, "open", self.open)
 
-    def setUpReadError(self, errno, strerror="dummy-msg",
+    def setUpReadError(self, errno=errno.EIO, strerror="dummy-msg",
                        filename="dummy-file"):
         """
         patch open() to return a file object that will raise IOError on read()
@@ -105,11 +129,28 @@ class OpenFileMixin:
         self.open = mock.Mock(return_value=self.fileobj)
         self.patch(__builtin__, "open", self.open)
 
+    def setUpWriteError(self, errno=errno.ENOSPC, strerror="dummy-msg",
+                        filename="dummy-file"):
+        """
+        patch open() to return a file object that will raise IOError on write()
+
+        @param    errno: exception's errno value
+        @param strerror: exception's strerror value
+        @param filename: exception's filename value
+        """
+        self.fileobj = mock.Mock()
+        self.fileobj.write = mock.Mock(side_effect=IOError(errno, strerror,
+                                                           filename))
+        self.open = mock.Mock(return_value=self.fileobj)
+        self.patch(__builtin__, "open", self.open)
+
 
 class StdoutAssertionsMixin(object):
+
     """
     Mix this in to be able to assert on stdout during the test
     """
+
     def setUpStdoutAssertions(self):
         self.stdout = cStringIO.StringIO()
         self.patch(sys, 'stdout', self.stdout)

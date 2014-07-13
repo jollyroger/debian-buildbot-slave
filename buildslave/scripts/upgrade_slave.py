@@ -13,25 +13,25 @@
 #
 # Copyright Buildbot Team Members
 
-import sys
-import twisted
+import os
 
-from twisted.python import runtime
-from twisted.python import versions
+from buildslave.scripts import base
 
 
-def usesFlushLoggedErrors(test):
-    "Decorate a test method that uses flushLoggedErrors with this decorator"
-    if (sys.version_info[:2] == (2, 7)
-            and twisted.version <= versions.Version('twisted', 9, 0, 0)):
-        test.skip = \
-            "flushLoggedErrors is broken on Python==2.7 and Twisted<=9.0.0"
-    return test
+def upgradeSlave(config):
+    basedir = os.path.expanduser(config['basedir'])
 
+    if not base.isBuildslaveDir(basedir):
+        return 1
 
-def skipUnlessPlatformIs(platform):
-    def closure(test):
-        if runtime.platformType != platform:
-            test.skip = "not a %s platform" % platform
-        return test
-    return closure
+    buildbot_tac = open(os.path.join(basedir, "buildbot.tac")).read()
+    new_buildbot_tac = buildbot_tac.replace(
+        "from buildbot.slave.bot import BuildSlave",
+        "from buildslave.bot import BuildSlave")
+    if new_buildbot_tac != buildbot_tac:
+        open(os.path.join(basedir, "buildbot.tac"), "w").write(new_buildbot_tac)
+        print "buildbot.tac updated"
+    else:
+        print "No changes made"
+
+    return 0

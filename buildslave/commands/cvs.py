@@ -16,10 +16,12 @@
 import os
 import time
 
-from buildslave.commands.base import SourceBaseCommand
 from buildslave import runprocess
+from buildslave.commands.base import SourceBaseCommand
+
 
 class CVS(SourceBaseCommand):
+
     """CVS-specific VC operation. In addition to the arguments handled by
     SourceBaseCommand, this command reads the following keys:
 
@@ -37,6 +39,7 @@ class CVS(SourceBaseCommand):
     """
 
     header = "cvs operation"
+    requiredArgs = ['cvsroot', 'cvsmodule']
 
     def setup(self, args):
         SourceBaseCommand.setup(self, args)
@@ -64,10 +67,10 @@ class CVS(SourceBaseCommand):
             command = ([cvs, '-d', self.cvsroot] + self.global_options
                        + ['login'])
             c = runprocess.RunProcess(self.builder, command, d,
-                             sendRC=False, timeout=self.timeout,
-                             maxTime=self.maxTime,
-                             initialStdin=self.login+"\n",
-                             logEnviron=self.logEnviron,usePTY=False)
+                                      sendRC=False, timeout=self.timeout,
+                                      maxTime=self.maxTime,
+                                      initialStdin=self.login + "\n",
+                                      logEnviron=self.logEnviron, usePTY=False)
             self.command = c
             d = c.start()
             d.addCallback(self._abandonOnFailure)
@@ -89,9 +92,9 @@ class CVS(SourceBaseCommand):
         if self.revision:
             command += ['-D', self.revision]
         c = runprocess.RunProcess(self.builder, command, d,
-                         sendRC=False, timeout=self.timeout,
-                         maxTime=self.maxTime, logEnviron=self.logEnviron,
-                         usePTY=False)
+                                  sendRC=False, timeout=self.timeout,
+                                  maxTime=self.maxTime, logEnviron=self.logEnviron,
+                                  usePTY=False)
         self.command = c
         return c.start()
 
@@ -119,9 +122,9 @@ class CVS(SourceBaseCommand):
         command += [self.cvsmodule]
 
         c = runprocess.RunProcess(self.builder, command, d,
-                         sendRC=False, timeout=self.timeout,
-                         maxTime=self.maxTime, logEnviron=self.logEnviron,
-                         usePTY=False)
+                                  sendRC=False, timeout=self.timeout,
+                                  maxTime=self.maxTime, logEnviron=self.logEnviron,
+                                  usePTY=False)
         self.command = c
         return c.start()
 
@@ -131,4 +134,3 @@ class CVS(SourceBaseCommand):
         # the local system having a clock that is
         # reasonably-well-synchronized with the repository.
         return time.strftime("%Y-%m-%d %H:%M:%S +0000", time.gmtime())
-

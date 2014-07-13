@@ -13,16 +13,18 @@
 #
 # Copyright Buildbot Team Members
 
-import os, re
+import os
+import re
 
 from twisted.python import log
 
-from buildslave.commands.base import SourceBaseCommand
 from buildslave import runprocess
+from buildslave.commands.base import SourceBaseCommand
 from buildslave.util import Obfuscated
 
 
 class P4Base(SourceBaseCommand):
+
     """Base class for P4 source-updaters
 
     ['p4port'] (required): host:port for server to access
@@ -30,6 +32,9 @@ class P4Base(SourceBaseCommand):
     ['p4passwd'] (optional): passwd to try for the user
     ['p4client'] (optional): client spec to use
     """
+
+    requiredArgs = ['p4port']
+
     def setup(self, args):
         SourceBaseCommand.setup(self, args)
         self.p4port = args['p4port']
@@ -52,10 +57,10 @@ class P4Base(SourceBaseCommand):
         # add '-s submitted' for bug #626
         command.extend(['changes', '-s', 'submitted', '-m', '1', '#have'])
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
-                         environ=self.env, timeout=self.timeout,
-                         maxTime=self.maxTime, sendStdout=True,
-                         sendRC=False, keepStdout=True,
-                         usePTY=False, logEnviron=self.logEnviron)
+                                  environ=self.env, timeout=self.timeout,
+                                  maxTime=self.maxTime, sendStdout=True,
+                                  sendRC=False, keepStdout=True,
+                                  usePTY=False, logEnviron=self.logEnviron)
         self.command = c
         d = c.start()
 
@@ -63,7 +68,7 @@ class P4Base(SourceBaseCommand):
             # 'p4 -c clien-name change -m 1 "#have"' will produce an output like:
             # "Change 28147 on 2008/04/07 by p4user@hostname..."
             # The number after "Change" is the one we want.
-            m = re.match('Change\s+(\d+)\s+', c.stdout)
+            m = re.match(r'Change\s+(\d+)\s+', c.stdout)
             if m:
                 return m.group(1)
             return None
@@ -72,6 +77,7 @@ class P4Base(SourceBaseCommand):
 
 
 class P4(P4Base):
+
     """A P4 source-updater.
 
     ['p4port'] (required): host:port for server to access
@@ -102,24 +108,23 @@ class P4(P4Base):
             return x
         self.sourcedata = str([
             enc(x) for x in [
-            # Perforce server.
-            self.p4port,
+                # Perforce server.
+                self.p4port,
 
-            # Client spec.
-            self.p4client,
+                # Client spec.
+                self.p4client,
 
-            # Depot side of view spec.
-            self.p4base,
-            self.p4branch,
-            self.p4extra_views,
-            self.p4line_end,
+                # Depot side of view spec.
+                self.p4base,
+                self.p4branch,
+                self.p4extra_views,
+                self.p4line_end,
 
-            # Local side of view spec (srcdir is made from these).
-            self.builder.basedir,
-            self.mode,
-            self.workdir
-        ]])
-
+                # Local side of view spec (srcdir is made from these).
+                self.builder.basedir,
+                self.mode,
+                self.workdir
+            ]])
 
     def sourcedirIsUpdateable(self):
         # We assume our client spec is still around.
@@ -150,14 +155,13 @@ class P4(P4Base):
             command.extend(['@' + str(self.revision)])
         env = {}
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
-                         environ=env, sendRC=False, timeout=self.timeout,
-                         maxTime=self.maxTime, usePTY=False,
-                         logEnviron=self.logEnviron)
+                                  environ=env, sendRC=False, timeout=self.timeout,
+                                  maxTime=self.maxTime, usePTY=False,
+                                  logEnviron=self.logEnviron)
         self.command = c
         d = c.start()
         d.addCallback(self._abandonOnFailure)
         return d
-
 
     def doVCFull(self):
         env = {}
@@ -201,12 +205,12 @@ class P4(P4Base):
         # (http://github.com/bdbaddog/buildbot/commit/8420149b2b804efcf5f81a13e18aa62da0424d21)
 
         # Clean client spec to plain ascii
-        client_spec=client_spec.encode('ascii','ignore')
+        client_spec = client_spec.encode('ascii', 'ignore')
 
         c = runprocess.RunProcess(self.builder, command, self.builder.basedir,
-                         environ=env, sendRC=False, timeout=self.timeout,
-                         maxTime=self.maxTime, initialStdin=client_spec,
-                         usePTY=False, logEnviron=self.logEnviron)
+                                  environ=env, sendRC=False, timeout=self.timeout,
+                                  maxTime=self.maxTime, initialStdin=client_spec,
+                                  usePTY=False, logEnviron=self.logEnviron)
         self.command = c
         d = c.start()
         d.addCallback(self._abandonOnFailure)
@@ -218,4 +222,3 @@ class P4(P4Base):
             return str(self.revision)
         else:
             return P4Base.parseGotRevision(self)
-

@@ -15,25 +15,41 @@
 
 
 import os
-from twisted.python.failure import Failure
-from twisted.internet import defer, reactor, protocol, error
+import platform
+
+from twisted.internet import defer
+from twisted.internet import error
+from twisted.internet import protocol
+from twisted.internet import reactor
 from twisted.protocols.basic import LineOnlyReceiver
+from twisted.python.failure import Failure
+
 
 class FakeTransport:
     disconnecting = False
 
+
 class BuildmasterTimeoutError(Exception):
     pass
+
+
 class BuildslaveTimeoutError(Exception):
     pass
+
+
 class ReconfigError(Exception):
     pass
+
+
 class BuildSlaveDetectedError(Exception):
     pass
 
+
 class TailProcess(protocol.ProcessProtocol):
+
     def outReceived(self, data):
         self.lw.dataReceived(data)
+
     def errReceived(self, data):
         print "ERR: '%s'" % (data,)
 
@@ -62,7 +78,11 @@ class LogWatcher(LineOnlyReceiver):
         # been seen within 10 seconds, and with ReconfigError if the error
         # line was seen. If the logfile could not be opened, it errbacks with
         # an IOError.
-        self.p = reactor.spawnProcess(self.pp, "/usr/bin/tail",
+        if platform.system().lower() == 'sunos' and os.path.exists('/usr/xpg4/bin/tail'):
+            tailBin = "/usr/xpg4/bin/tail"
+        else:
+            tailBin = "/usr/bin/tail"
+        self.p = reactor.spawnProcess(self.pp, tailBin,
                                       ("tail", "-f", "-n", "0", self.logfile),
                                       env=os.environ,
                                       )

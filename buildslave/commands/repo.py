@@ -19,12 +19,13 @@ import textwrap
 
 from twisted.internet import defer
 
-from buildslave.commands.base import SourceBaseCommand
 from buildslave import runprocess
 from buildslave.commands.base import AbandonChain
+from buildslave.commands.base import SourceBaseCommand
 
 
 class Repo(SourceBaseCommand):
+
     """Repo specific VC operation. In addition to the arguments
     handled by SourceBaseCommand, this command reads the following keys:
 
@@ -42,13 +43,14 @@ class Repo(SourceBaseCommand):
     """
 
     header = "repo operation"
+    requiredArgs = ['manifest_url']
 
     def setup(self, args):
         SourceBaseCommand.setup(self, args)
         self.manifest_url = args.get('manifest_url')
         self.manifest_branch = args.get('manifest_branch')
-        self.manifest_file =  args.get('manifest_file')
-        self.manifest_override_url =  args.get('manifest_override_url')
+        self.manifest_file = args.get('manifest_file')
+        self.manifest_override_url = args.get('manifest_override_url')
         self.tarball = args.get('tarball')
         self.repo_downloads = args.get('repo_downloads')
         # we're using string instead of an array here, because it will be transferred back
@@ -57,7 +59,7 @@ class Repo(SourceBaseCommand):
         self.jobs = args.get('jobs')
 
         self.sourcedata = "%s %s" % (self.manifest_url, self.manifest_file)
-        self.re_change = re.compile(".* refs/changes/\d\d/(\d+)/(\d+) -> FETCH_HEAD$")
+        self.re_change = re.compile(r".* refs/changes/\d\d/(\d+)/(\d+) -> FETCH_HEAD$")
         self.re_head = re.compile("^HEAD is now at ([0-9a-f]+)...")
 
     def _fullSrcdir(self):
@@ -71,9 +73,9 @@ class Repo(SourceBaseCommand):
     def _repoCmd(self, command, cb=None, abandonOnFailure=True, **kwargs):
         repo = self.getCommand("repo")
         c = runprocess.RunProcess(self.builder, [repo] + command, self._fullSrcdir(),
-                         sendRC=False, timeout=self.timeout,
-                         maxTime=self.maxTime, usePTY=False,
-                         logEnviron=self.logEnviron, **kwargs)
+                                  sendRC=False, timeout=self.timeout,
+                                  maxTime=self.maxTime, usePTY=False,
+                                  logEnviron=self.logEnviron, **kwargs)
         self.command = c
         d = c.start()
         if cb:
@@ -108,7 +110,7 @@ class Repo(SourceBaseCommand):
         else:
             return self._doInit(None)
 
-    def _doInit(self,res):
+    def _doInit(self, res):
         # on fresh init, this file may confuse repo.
         if os.path.exists(os.path.join(self._fullSrcdir(), ".repo/project.list")):
             os.unlink(os.path.join(self._fullSrcdir(), ".repo/project.list"))
@@ -119,7 +121,7 @@ class Repo(SourceBaseCommand):
 
     def doVCUpdate(self):
         if self.repo_downloads:
-            self.sendStatus({'header': "will download:\n" + "repo download "+ "\nrepo download ".join(self.repo_downloads) + "\n"})
+            self.sendStatus({'header': "will download:\n" + "repo download " + "\nrepo download ".join(self.repo_downloads) + "\n"})
         return self._doPreSyncCleanUp(None)
 
     # a simple shell script to gather all cleanup tweaks...
@@ -144,7 +146,7 @@ class Repo(SourceBaseCommand):
                repo forall -c git clean -f -d -x 2>/dev/null
                 repo forall -c git reset --hard HEAD 2>/dev/null
              """) % self.__dict__
-        return "\n".join([ s.strip() for s in command.splitlines()])
+        return "\n".join([s.strip() for s in command.splitlines()])
 
     def _doPreInitCleanUp(self, dummy):
         command = self._cleanupCommand()
@@ -156,9 +158,9 @@ class Repo(SourceBaseCommand):
 
     def _doManifestOveride(self, dummy):
         if self.manifest_override_url:
-            self.sendStatus({"header": "overriding manifest with %s\n" %(self.manifest_override_url)})
+            self.sendStatus({"header": "overriding manifest with %s\n" % (self.manifest_override_url)})
             if os.path.exists(os.path.join(self._fullSrcdir(), self.manifest_override_url)):
-                os.system("cd %s; cp -f %s manifest_override.xml"%(self._fullSrcdir(),self.manifest_override_url))
+                os.system("cd %s; cp -f %s manifest_override.xml" % (self._fullSrcdir(), self.manifest_override_url))
             else:
                 command = ["wget", self.manifest_override_url, '-O', 'manifest_override.xml']
                 return self._Cmd(command, self._doSync)
@@ -166,10 +168,10 @@ class Repo(SourceBaseCommand):
 
     def _doSync(self, dummy):
         if self.manifest_override_url:
-            os.system("cd %s/.repo; ln -sf ../manifest_override.xml manifest.xml"%(self._fullSrcdir()))
+            os.system("cd %s/.repo; ln -sf ../manifest_override.xml manifest.xml" % (self._fullSrcdir()))
         command = ['sync']
         if self.jobs:
-          command.append('-j' + str(self.jobs))
+            command.append('-j' + str(self.jobs))
         self.sendStatus({"header": "synching manifest %s from branch %s from %s\n"
                                    % (self.manifest_file, self.manifest_branch, self.manifest_url)})
         return self._repoCmd(command, self._didSync)
@@ -184,13 +186,12 @@ class Repo(SourceBaseCommand):
         command = ['manifest', '-r', '-o', 'manifest-original.xml']
         return self._repoCmd(command, self._doDownload, abandonOnFailure=False)
 
-
     def _doDownload(self, dummy):
         if hasattr(self.command, 'stderr') and self.command.stderr:
             if "Automatic cherry-pick failed" in self.command.stderr or "Automatic revert failed" in self.command.stderr:
-                command = ['forall','-c' ,'git' ,'diff', 'HEAD']
+                command = ['forall', '-c', 'git', 'diff', 'HEAD']
                 self.cherry_pick_failed = True
-                return self._repoCmd(command, self._DownloadAbandon, abandonOnFailure = False, keepStderr=True) # call again
+                return self._repoCmd(command, self._DownloadAbandon, abandonOnFailure=False, keepStderr=True)  # call again
 
             lines = self.command.stderr.split('\n')
             if len(lines) > 2:
@@ -205,7 +206,7 @@ class Repo(SourceBaseCommand):
             command = ['download'] + download.split(' ')
             self.sendStatus({"header": "downloading changeset %s\n"
                                        % (download)})
-            return self._repoCmd(command, self._doDownload, abandonOnFailure = False, keepStderr=True) # call again
+            return self._repoCmd(command, self._doDownload, abandonOnFailure=False, keepStderr=True)  # call again
 
         if self.repo_downloaded:
             self.sendStatus({"repo_downloaded": self.repo_downloaded[:-1]})
@@ -219,7 +220,7 @@ class Repo(SourceBaseCommand):
                 raise AbandonChain(-1)
             if hasattr(self, 'cherry_pick_failed') or "Automatic cherry-pick failed" in self.command.stderr:
                 raise AbandonChain(-1)
-    def _DownloadAbandon(self,dummy):
+
+    def _DownloadAbandon(self, dummy):
         self.sendStatus({"header": "abandonned due to merge failure\n"})
         raise AbandonChain(-1)
-

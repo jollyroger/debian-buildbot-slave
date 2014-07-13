@@ -13,13 +13,17 @@
 #
 # Copyright Buildbot Team Members
 
-import sys
 import cStringIO
-from twisted.trial import unittest
+import os
+import sys
+
 from buildslave.scripts import base
 from buildslave.test.util import misc
+from twisted.trial import unittest
 
-class TestIsBuildslaveDir(misc.OpenFileMixin, unittest.TestCase):
+
+class TestIsBuildslaveDir(misc.FileIOMixin, unittest.TestCase):
+
     """Test buildslave.scripts.base.isBuildslaveDir()"""
 
     def setUp(self):
@@ -27,10 +31,15 @@ class TestIsBuildslaveDir(misc.OpenFileMixin, unittest.TestCase):
         self.mocked_stdout = cStringIO.StringIO()
         self.patch(sys, "stdout", self.mocked_stdout)
 
+        # generate OS specific relative path to buildbot.tac inside basedir
+        self.tac_file_path = os.path.join("testdir", "buildbot.tac")
+
     def assertReadErrorMessage(self, strerror):
+        expected_message = "error reading '%s': %s\n" \
+                           "invalid buildslave directory 'testdir'\n" \
+            % (self.tac_file_path, strerror)
         self.assertEqual(self.mocked_stdout.getvalue(),
-                         "error reading 'testdir/buildbot.tac': %s\n"
-                         "invalid buildslave directory 'testdir'\n" % strerror,
+                         expected_message,
                          "unexpected error message on stdout")
 
     def test_open_error(self):
@@ -46,7 +55,7 @@ class TestIsBuildslaveDir(misc.OpenFileMixin, unittest.TestCase):
         self.assertReadErrorMessage("open-error")
 
         # check that open() was called with correct path
-        self.open.assert_called_once_with("testdir/buildbot.tac")
+        self.open.assert_called_once_with(self.tac_file_path)
 
     def test_read_error(self):
         """Test that read() errors on buildbot.tac file are handled."""
@@ -61,7 +70,7 @@ class TestIsBuildslaveDir(misc.OpenFileMixin, unittest.TestCase):
         self.assertReadErrorMessage("read-error")
 
         # check that open() was called with correct path
-        self.open.assert_called_once_with("testdir/buildbot.tac")
+        self.open.assert_called_once_with(self.tac_file_path)
 
     def test_unexpected_tac_contents(self):
         """Test that unexpected contents in buildbot.tac is handled."""
@@ -74,11 +83,11 @@ class TestIsBuildslaveDir(misc.OpenFileMixin, unittest.TestCase):
 
         # check that correct error message was printed to stdout
         self.assertEqual(self.mocked_stdout.getvalue(),
-                         "unexpected content in 'testdir/buildbot.tac'\n"
+                         "unexpected content in '%s'\n" % self.tac_file_path +
                          "invalid buildslave directory 'testdir'\n",
                          "unexpected error message on stdout")
         # check that open() was called with correct path
-        self.open.assert_called_once_with("testdir/buildbot.tac")
+        self.open.assert_called_once_with(self.tac_file_path)
 
     def test_slavedir_good(self):
         """Test checking valid buildslave directory."""
@@ -90,4 +99,4 @@ class TestIsBuildslaveDir(misc.OpenFileMixin, unittest.TestCase):
         self.assertTrue(base.isBuildslaveDir("testdir"))
 
         # check that open() was called with correct path
-        self.open.assert_called_once_with("testdir/buildbot.tac")
+        self.open.assert_called_once_with(self.tac_file_path)
