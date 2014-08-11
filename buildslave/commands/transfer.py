@@ -13,12 +13,15 @@
 #
 # Copyright Buildbot Team Members
 
-import os, tarfile, tempfile
+import os
+import tarfile
+import tempfile
 
-from twisted.python import log
 from twisted.internet import defer
+from twisted.python import log
 
 from buildslave.commands.base import Command
+
 
 class TransferCommand(Command):
 
@@ -46,6 +49,7 @@ class TransferCommand(Command):
 
 
 class SlaveFileUploadCommand(TransferCommand):
+
     """
     Upload a file from slave to build master
     Arguments:
@@ -58,6 +62,7 @@ class SlaveFileUploadCommand(TransferCommand):
         - ['keepstamp']: whether to preserve file modified and accessed times
     """
     debug = False
+    requiredArgs = ['workdir', 'slavesrc', 'writer', 'blocksize']
 
     def setup(self, args):
         self.workdir = args['workdir']
@@ -97,24 +102,28 @@ class SlaveFileUploadCommand(TransferCommand):
 
         d = defer.Deferred()
         self._reactor.callLater(0, self._loop, d)
+
         def _close_ok(res):
             self.fp = None
             d1 = self.writer.callRemote("close")
+
             def _utime_ok(res):
                 return self.writer.callRemote("utime", accessed_modified)
             if self.keepstamp:
                 d1.addCallback(_utime_ok)
             return d1
+
         def _close_err(f):
             self.rc = 1
             self.fp = None
             # call remote's close(), but keep the existing failure
             d1 = self.writer.callRemote("close")
+
             def eb(f2):
                 log.msg("ignoring error from remote close():")
                 log.err(f2)
             d1.addErrback(eb)
-            d1.addBoth(lambda _ : f) # always return _loop failure
+            d1.addBoth(lambda _: f)  # always return _loop failure
             return d1
 
         d.addCallbacks(_close_ok, _close_err)
@@ -123,11 +132,13 @@ class SlaveFileUploadCommand(TransferCommand):
 
     def _loop(self, fire_when_done):
         d = defer.maybeDeferred(self._writeBlock)
+
         def _done(finished):
             if finished:
                 fire_when_done.callback(None)
             else:
                 self._loop(fire_when_done)
+
         def _err(why):
             fire_when_done.errback(why)
         d.addCallbacks(_done, _err)
@@ -148,14 +159,14 @@ class SlaveFileUploadCommand(TransferCommand):
         if length <= 0:
             if self.stderr is None:
                 self.stderr = 'Maximum filesize reached, truncating file \'%s\'' \
-                                % self.path
+                    % self.path
                 self.rc = 1
             data = ''
         else:
             data = self.fp.read(length)
 
         if self.debug:
-            log.msg('SlaveFileUploadCommand._writeBlock(): '+
+            log.msg('SlaveFileUploadCommand._writeBlock(): ' +
                     'allowed=%d readlen=%d' % (length, len(data)))
         if len(data) == 0:
             log.msg("EOF: callRemote(close)")
@@ -171,6 +182,7 @@ class SlaveFileUploadCommand(TransferCommand):
 
 class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
     debug = False
+    requiredArgs = ['workdir', 'slavesrc', 'writer', 'blocksize']
 
     def setup(self, args):
         self.workdir = args['workdir']
@@ -196,9 +208,9 @@ class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
         fd, self.tarname = tempfile.mkstemp()
         fileobj = os.fdopen(fd, 'w')
         if self.compress == 'bz2':
-            mode='w|bz2'
+            mode = 'w|bz2'
         elif self.compress == 'gz':
-            mode='w|gz'
+            mode = 'w|gz'
         else:
             mode = 'w'
         archive = tarfile.open(name=self.tarname, mode=mode, fileobj=fileobj)
@@ -213,8 +225,10 @@ class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
 
         d = defer.Deferred()
         self._reactor.callLater(0, self._loop, d)
+
         def unpack(res):
             d1 = self.writer.callRemote("unpack")
+
             def unpack_err(f):
                 self.rc = 1
                 return f
@@ -232,6 +246,7 @@ class SlaveDirectoryUploadCommand(SlaveFileUploadCommand):
 
 
 class SlaveFileDownloadCommand(TransferCommand):
+
     """
     Download a file from master to slave
     Arguments:
@@ -244,6 +259,7 @@ class SlaveFileDownloadCommand(TransferCommand):
         - ['mode']:      access mode for the new file
     """
     debug = False
+    requiredArgs = ['workdir', 'slavedest', 'reader', 'blocksize']
 
     def setup(self, args):
         self.workdir = args['workdir']
@@ -291,6 +307,7 @@ class SlaveFileDownloadCommand(TransferCommand):
 
         d = defer.Deferred()
         self._reactor.callLater(0, self._loop, d)
+
         def _close(res):
             # close the file, but pass through any errors from _loop
             d1 = self.reader.callRemote('close')
@@ -303,11 +320,13 @@ class SlaveFileDownloadCommand(TransferCommand):
 
     def _loop(self, fire_when_done):
         d = defer.maybeDeferred(self._readBlock)
+
         def _done(finished):
             if finished:
                 fire_when_done.callback(None)
             else:
                 self._loop(fire_when_done)
+
         def _err(why):
             fire_when_done.errback(why)
         d.addCallbacks(_done, _err)
@@ -328,7 +347,7 @@ class SlaveFileDownloadCommand(TransferCommand):
         if length <= 0:
             if self.stderr is None:
                 self.stderr = "Maximum filesize reached, truncating file '%s'" \
-                                % self.path
+                    % self.path
                 self.rc = 1
             return True
         else:

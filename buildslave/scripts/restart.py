@@ -13,25 +13,24 @@
 #
 # Copyright Buildbot Team Members
 
-import sys
-import twisted
-
-from twisted.python import runtime
-from twisted.python import versions
+from buildslave.scripts import base
+from buildslave.scripts import start
+from buildslave.scripts import stop
 
 
-def usesFlushLoggedErrors(test):
-    "Decorate a test method that uses flushLoggedErrors with this decorator"
-    if (sys.version_info[:2] == (2, 7)
-            and twisted.version <= versions.Version('twisted', 9, 0, 0)):
-        test.skip = \
-            "flushLoggedErrors is broken on Python==2.7 and Twisted<=9.0.0"
-    return test
+def restart(config):
+    quiet = config['quiet']
+    basedir = config['basedir']
 
+    if not base.isBuildslaveDir(basedir):
+        return 1
 
-def skipUnlessPlatformIs(platform):
-    def closure(test):
-        if runtime.platformType != platform:
-            test.skip = "not a %s platform" % platform
-        return test
-    return closure
+    try:
+        stop.stopSlave(basedir, quiet)
+    except stop.SlaveNotRunning:
+        if not quiet:
+            print "no old buildslave process found to stop"
+    if not quiet:
+        print "now restarting buildslave process.."
+
+    return start.startSlave(basedir, quiet, config['nodaemon'])

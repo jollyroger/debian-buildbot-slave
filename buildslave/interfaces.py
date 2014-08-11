@@ -13,10 +13,15 @@
 #
 # Copyright Buildbot Team Members
 
+# disable pylint warnings triggered by interface definitions
+# pylint: disable=no-self-argument
+# pylint: disable=no-method-argument
 
 from zope.interface import Interface
 
+
 class ISlaveCommand(Interface):
+
     """This interface is implemented by all of the buildslave's Command
     subclasses. It specifies how the buildslave can start, interrupt, and
     query the various Commands running on behalf of the buildmaster."""

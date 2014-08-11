@@ -14,17 +14,20 @@
 # Copyright Buildbot Team Members
 
 import os
+
 from xml.dom.minidom import parseString
 
-from twisted.python import log
 from twisted.internet import defer
+from twisted.python import log
 
-from buildslave.commands.base import SourceBaseCommand
 from buildslave import runprocess
 from buildslave.commands import utils
+from buildslave.commands.base import SourceBaseCommand
 from buildslave.util import Obfuscated
 
+
 class SVN(SourceBaseCommand):
+
     """Subversion-specific VC operation. In addition to the arguments
     handled by SourceBaseCommand, this command reads the following keys:
 
@@ -38,6 +41,7 @@ class SVN(SourceBaseCommand):
     """
 
     header = "svn operation"
+    requiredArgs = ['svnurl']
 
     def setup(self, args):
         SourceBaseCommand.setup(self, args)
@@ -51,15 +55,15 @@ class SVN(SourceBaseCommand):
         self.exported_rev = 'HEAD'
 
         self.svn_args = []
-        if args.has_key('username'):
+        if "username" in args:
             self.svn_args.extend(["--username", args['username']])
-        if args.has_key('password'):
+        if "password" in args:
             self.svn_args.extend(["--password", Obfuscated(args['password'], "XXXX")])
         if args.get('extra_args', None) is not None:
             self.svn_args.extend(args['extra_args'])
 
-        if args.has_key('depth'):
-            self.svn_args.extend(["--depth",args['depth']])
+        if "depth" in args:
+            self.svn_args.extend(["--depth", args['depth']])
 
     def _dovccmd(self, command, args, rootdir=None, cb=None, **kwargs):
         svn = self.getCommand("svn")
@@ -69,9 +73,9 @@ class SVN(SourceBaseCommand):
         fullCmd.extend(self.svn_args)
         fullCmd.extend(args)
         c = runprocess.RunProcess(self.builder, fullCmd, rootdir,
-                         environ=self.env, sendRC=False, timeout=self.timeout,
-                         maxTime=self.maxTime, usePTY=False,
-                         logEnviron=self.logEnviron, **kwargs)
+                                  environ=self.env, sendRC=False, timeout=self.timeout,
+                                  maxTime=self.maxTime, usePTY=False,
+                                  logEnviron=self.logEnviron, **kwargs)
         self.command = c
         d = c.start()
         if cb:
@@ -95,8 +99,10 @@ class SVN(SourceBaseCommand):
         args = ['--revision', str(revision), "%s@%s" % (self.svnurl, str(revision)), self.srcdir]
 
         if self.mode == 'export':
-            if revision == 'HEAD': return self.doSVNExport()
-            else: command = 'export'
+            if revision == 'HEAD':
+                return self.doSVNExport()
+            else:
+                command = 'export'
         else:
             # mode=='clobber', or copy/update on a broken workspace
             command = 'checkout'
@@ -119,7 +125,7 @@ class SVN(SourceBaseCommand):
         svn_info_d = self._dovccmd('info', (self.svnurl,), rootdir=self.builder.basedir, keepStdout=True)
 
         svn_info_d.addCallbacks(parseInfo, self._abandonOnFailure)
-        svn_info_d.addCallbacks(exportCmd) 
+        svn_info_d.addCallbacks(exportCmd)
 
         return svn_info_d
 
@@ -151,7 +157,7 @@ class SVN(SourceBaseCommand):
     def _purgeAndUpdate2(self, res):
         for filename in self.getUnversionedFiles(self.command.stdout, self.keep_on_purge):
             filepath = os.path.join(self.builder.basedir, self.workdir,
-                        filename)
+                                    filename)
             self.sendStatus({'stdout': "%s\n" % filepath})
             if os.path.isfile(filepath):
                 os.chmod(filepath, 0700)
@@ -185,13 +191,14 @@ class SVN(SourceBaseCommand):
             return defer.succeed(got_revision)
 
         c = runprocess.RunProcess(self.builder,
-                         self.getSvnVersionCommand(),
-                         os.path.join(self.builder.basedir, self.srcdir),
-                         environ=self.env, timeout=self.timeout,
-                         sendStdout=False, sendStderr=False, sendRC=False,
-                         keepStdout=True, usePTY=False,
-                         logEnviron=self.logEnviron)
+                                  self.getSvnVersionCommand(),
+                                  os.path.join(self.builder.basedir, self.srcdir),
+                                  environ=self.env, timeout=self.timeout,
+                                  sendStdout=False, sendStderr=False, sendRC=False,
+                                  keepStdout=True, usePTY=False,
+                                  logEnviron=self.logEnviron)
         d = c.start()
+
         def _parse(res):
             r_raw = c.stdout.strip()
             # Extract revision from the version "number" string
@@ -201,8 +208,8 @@ class SVN(SourceBaseCommand):
             try:
                 got_version = int(r)
             except ValueError:
-                msg =("SVN.parseGotRevision unable to parse output "
-                      "of svnversion: '%s'" % r_raw)
+                msg = ("SVN.parseGotRevision unable to parse output "
+                       "of svnversion: '%s'" % r_raw)
                 log.msg(msg)
                 self.sendStatus({'header': msg + "\n"})
             return got_version
