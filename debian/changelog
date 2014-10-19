@@ -1,3 +1,13 @@
+buildbot-slave (0.8.9-2) unstable; urgency=medium
+
+  * Allow single instance restart (Closes: #661102)
+  * Use correct exit code during start (Refs: #758432)
+  * Update Standards-Version to 3.9.6. No changes required.
+  * Update debian/watch, add possibility to check PGP signature
+  * Add autopkgtest support
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Thu, 23 Oct 2014 18:04:07 +0300
+
 buildbot-slave (0.8.9-1) unstable; urgency=medium
 
   * New upstream release.
