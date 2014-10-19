@@ -1,2 +1,3 @@
 fix-init-scripts.patch
 restart-single-instance.patch
+exit-code.patch
