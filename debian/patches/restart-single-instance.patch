@@ -1,0 +1,48 @@
+Description: Add possibility to operate a single slave from init script
+Author: Brice Goglin <bgoglin@debian.org>
+Reviewed-by: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Origin: other, https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=661102
+Bug-Debian: http://bugs.debian.org/661102
+Forwarded: https://github.com/buildbot/buildbot/pull/1267
+Date: Fri, 24 Feb 2012 09:11:27 +0100
+Last-Update: 2014-10-19
+
+Index: debian-buildbot-slave/contrib/init-scripts/buildslave.init.sh
+===================================================================
+--- debian-buildbot-slave.orig/contrib/init-scripts/buildslave.init.sh
++++ debian-buildbot-slave/contrib/init-scripts/buildslave.init.sh
+@@ -148,7 +148,9 @@ function slave_op () {
+ function do_op () {
+     errors=0
+     for i in $( seq ${#SLAVE_ENABLED[@]} ); do
+-        if is_disabled "${SLAVE_ENABLED[$i]}" ; then
++        if [ -n "$4" ] && [ "$4" != "${SLAVE_NAME[$i]}" ] ; then
++            continue
++        elif is_disabled "${SLAVE_ENABLED[$i]}" && [ -z "$4" ] ; then
+             continue
+         fi
+ 
+@@ -175,19 +177,19 @@ function do_op () {
+ 
+ case "$1" in
+     start)
+-        do_op "slave_op" "start" "Starting buildslave"
++        do_op "slave_op" "start" "Starting buildslave" "$2"
+         exit $?
+         ;;
+     stop)
+-        do_op "slave_op" "stop" "Stopping buildslave"
++        do_op "slave_op" "stop" "Stopping buildslave" "$2"
+         exit $?
+         ;;
+     reload)
+-        do_op "slave_op" "reload" "Reloading buildslave"
++        do_op "slave_op" "reload" "Reloading buildslave" "$2"
+         exit $?
+         ;;
+     restart|force-reload)
+-        do_op "slave_op" "restart" "Restarting buildslave"
++        do_op "slave_op" "restart" "Restarting buildslave" "$2"
+         exit $?
+         ;;
+     *)
